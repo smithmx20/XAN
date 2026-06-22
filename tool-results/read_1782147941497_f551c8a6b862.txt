@@ -1,0 +1,1458 @@
+     1→# XAN — Anime Streaming Web App (Final Plan v3 — Deep Audit)
+     2→
+     3→> **Styling:** TailwindCSS v4 + shadcn/ui  
+     4→> **Backend:** No API required — AniList-only mode with upgrade path  
+     5→> **Build Scope:** Phased (Phase 1 = Landing Page)  
+     6→> **Priority:** Error-free, bug-free, defensive coding
+     7→
+     8→> [!CAUTION]
+     9→> This plan has been through 3 audit passes. **24 bugs found and fixed** (see [§16 Bug Audit Log](#16-bug-audit-log)). Every code sample is verified against current package APIs.
+    10→
+    11→---
+    12→
+    13→## 1. Architecture Overview
+    14→
+    15→```mermaid
+    16→graph LR
+    17→    LP["Landing Page"]
+    18→    NAV["Navbar"]
+    19→    HP["Home Page"]
+    20→    AL["AniList API"]
+    21→    DP["Anime Detail Page"]
+    22→    WP["Watch Page + Vidstack"]
+    23→    BE["Backend API (when ready)"]
+    24→    SP["Search"]
+    25→    TP["Trending"]
+    26→    HI["History"]
+    27→
+    28→    LP -->|Phase 1 → 2| NAV
+    29→    NAV --> HP
+    30→    HP --> AL
+    31→    HP -->|Phase 3| DP
+    32→    DP -->|Phase 4| WP
+    33→    WP -.->|optional| BE
+    34→    SP -->|Phase 5| HP
+    35→    TP --> HP
+    36→    HI --> HP
+    37→```
+    38→
+    39→### No Backend Required — AniList-Only Mode
+    40→
+    41→| Feature | AniList-Only Mode | With Backend (future) |
+    42→|:---|:---|:---|
+    43→| Browse anime | ✅ Full metadata, images, scores | ✅ Same |
+    44→| Search | ✅ Full search + filters | ✅ Same |
+    45→| Trending / Popular | ✅ Real-time from AniList | ✅ Same |
+    46→| Anime details | ✅ Synopsis, characters, relations | ✅ Same |
+    47→| **Watch episodes** | ⚠️ Trailer-only (YouTube embed) | ✅ Full HLS streaming |
+    48→| Episode list | ✅ Listed (no playback links) | ✅ With playback |
+    49→
+    50→**Upgrade path:** Set `NEXT_PUBLIC_BACKEND_URL` in `.env.local` → streaming unlocks automatically.
+    51→
+    52→---
+    53→
+    54→## 2. Technology Stack (Locked & Verified)
+    55→
+    56→| Layer | Package | Install Name | Import Path | Version |
+    57→|:---|:---|:---|:---|:---|
+    58→| **Framework** | Next.js | `next` | `next/*` | 15.x |
+    59→| **Language** | TypeScript | `typescript` | — | 5.x |
+    60→| **Styling** | TailwindCSS v4 | `tailwindcss` | CSS `@import "tailwindcss"` | v4 |
+    61→| **CSS Animations** | tw-animate-css | `tw-animate-css` | CSS `@import "tw-animate-css"` | latest |
+    62→| **UI Library** | shadcn/ui | `npx shadcn@latest` | `@/components/ui/*` | latest |
+    63→| **Animations** | Motion | `motion` | `"motion/react"` | latest |
+    64→| **Validation** | Zod | `zod` | `"zod"` | latest |
+    65→| **Video Player** | Vidstack | `@vidstack/react` | `"@vidstack/react"` | 1.15.x |
+    66→| **Icons** | Lucide React | `lucide-react` | `"lucide-react"` | latest |
+    67→| **Theme** | next-themes | `next-themes` | `"next-themes"` | latest |
+    68→| **Utilities** | clsx | `clsx` | `"clsx"` | latest |
+    69→| **Utilities** | tailwind-merge | `tailwind-merge` | `"tailwind-merge"` | latest |
+    70→| **Metadata API** | AniList GraphQL | — (fetch) | `https://graphql.anilist.co` | v2 |
+    71→| **Fonts** | Google Fonts | — (next/font) | `"next/font/google"` | — |
+    72→
+    73→> [!CAUTION]
+    74→> **Package gotchas that WILL cause build failures:**
+    75→> - ❌ `npm install framer-motion` → ✅ `npm install motion`
+    76→> - ❌ `import { motion } from "framer-motion"` → ✅ `import { motion } from "motion/react"`
+    77→> - ❌ `tailwindcss-animate` → ✅ `tw-animate-css`
+    78→> - ❌ `tailwind.config.ts` file → ✅ CSS `@theme` in `globals.css`
+    79→> - ❌ `import { useRouter } from "next/router"` → ✅ `import { useRouter } from "next/navigation"`
+    80→> - ❌ `images: { domains: [...] }` → ✅ `images: { remotePatterns: [...] }`
+    81→> - ❌ `params.id` directly → ✅ `const { id } = await params` (Next.js 15 async params)
+    82→
+    83→---
+    84→
+    85→## 3. Exact Project Initialization
+    86→
+    87→```bash
+    88→# Step 1: Create project (--yes = non-interactive, applies defaults: TS + Tailwind + App Router + Turbopack)
+    89→npx -y create-next-app@latest ./xan --yes
+    90→
+    91→# Step 2: Enter project
+    92→cd xan
+    93→
+    94→# Step 3: Install dependencies
+    95→npm install motion zod lucide-react next-themes clsx tailwind-merge tw-animate-css
+    96→
+    97→# Step 4: Initialize shadcn/ui
+    98→npx shadcn@latest init
+    99→
+   100→# Step 5: Add shadcn components
+   101→npx shadcn@latest add button badge skeleton input dialog tooltip select scroll-area separator
+   102→
+   103→# Step 6: Verify build
+   104→npm run build
+   105→```
+   106→
+   107→### `package.json` Scripts (Verified)
+   108→
+   109→```json
+   110→{
+   111→  "scripts": {
+   112→    "dev": "next dev --turbopack",
+   113→    "build": "next build",
+   114→    "start": "next start",
+   115→    "lint": "next lint",
+   116→    "typecheck": "tsc --noEmit"
+   117→  }
+   118→}
+   119→```
+   120→
+   121→---
+   122→
+   123→## 4. Error Prevention Strategy (24-Point System)
+   124→
+   125→### 4.1 TypeScript — Strict Mode
+   126→
+   127→```json
+   128→// tsconfig.json — merge with Next.js generated config
+   129→{
+   130→  "compilerOptions": {
+   131→    "strict": true,
+   132→    "noUncheckedIndexedAccess": true,
+   133→    "noImplicitReturns": true,
+   134→    "noFallthroughCasesInSwitch": true,
+   135→    "forceConsistentCasingInFileNames": true,
+   136→    "exactOptionalPropertyTypes": false,
+   137→    "moduleResolution": "bundler",
+   138→    "paths": {
+   139→      "@/*": ["./*"]
+   140→    }
+   141→  }
+   142→}
+   143→```
+   144→
+   145→### 4.2 Zod — Runtime API Validation
+   146→
+   147→```typescript
+   148→// types/anime.ts
+   149→import { z } from 'zod';
+   150→
+   151→export const AnimeTitleSchema = z.object({
+   152→  romaji: z.string().nullable().default(null),
+   153→  english: z.string().nullable().default(null),
+   154→  native: z.string().nullable().default(null),
+   155→});
+   156→
+   157→export const AnimeSchema = z.object({
+   158→  id: z.number(),
+   159→  title: AnimeTitleSchema,
+   160→  coverImage: z.object({
+   161→    large: z.string(),  // ✅ NOT z.string().url() — AniList returns protocol-relative URLs
+   162→    color: z.string().nullable().default(null),
+   163→  }).nullable().default(null),
+   164→  bannerImage: z.string().nullable().default(null),
+   165→  description: z.string().nullable().default(null), // ⚠️ Contains HTML — must sanitize before rendering
+   166→  averageScore: z.number().nullable().default(null),
+   167→  episodes: z.number().nullable().default(null),
+   168→  status: z.enum(['FINISHED', 'RELEASING', 'NOT_YET_RELEASED', 'CANCELLED', 'HIATUS']).nullable().default(null),
+   169→  genres: z.array(z.string()).default([]),
+   170→  season: z.enum(['WINTER', 'SPRING', 'SUMMER', 'FALL']).nullable().default(null),
+   171→  seasonYear: z.number().nullable().default(null),
+   172→  format: z.enum(['TV', 'TV_SHORT', 'MOVIE', 'SPECIAL', 'OVA', 'ONA', 'MUSIC']).nullable().default(null),
+   173→  trending: z.number().nullable().default(null),
+   174→  popularity: z.number().nullable().default(null),
+   175→  trailer: z.object({
+   176→    id: z.string().nullable().default(null),
+   177→    site: z.string().nullable().default(null),
+   178→  }).nullable().default(null),
+   179→  nextAiringEpisode: z.object({
+   180→    airingAt: z.number(),
+   181→    episode: z.number(),
+   182→    timeUntilAiring: z.number(),
+   183→  }).nullable().default(null),
+   184→});
+   185→
+   186→export type Anime = z.infer<typeof AnimeSchema>;
+   187→export type AnimeTitle = z.infer<typeof AnimeTitleSchema>;
+   188→
+   189→export const PageInfoSchema = z.object({
+   190→  currentPage: z.number().default(1),
+   191→  hasNextPage: z.boolean().default(false),
+   192→  lastPage: z.number().nullable().default(null),
+   193→  perPage: z.number().default(20),
+   194→  total: z.number().nullable().default(null),
+   195→});
+   196→
+   197→export type PageInfo = z.infer<typeof PageInfoSchema>;
+   198→
+   199→// ─── Helper: Safe title extraction ───
+   200→export function getTitle(title: AnimeTitle): string {
+   201→  return title.english ?? title.romaji ?? title.native ?? 'Untitled';
+   202→}
+   203→
+   204→// ─── Helper: Strip HTML from AniList descriptions ───
+   205→export function sanitizeDescription(html: string | null): string {
+   206→  if (!html) return '';
+   207→  return html.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+   208→}
+   209→```
+   210→
+   211→> [!WARNING]
+   212→> **Bug #20 (NEW):** AniList `description` field contains raw HTML (`<br>`, `<i>`, `&amp;`). Rendering it with `dangerouslySetInnerHTML` is an XSS risk. Rendering it as plain text shows tags. Added `sanitizeDescription()` helper to strip HTML safely.
+   213→
+   214→### 4.3 Error Boundaries — With Reset Function
+   215→
+   216→```typescript
+   217→// components/ErrorBoundary.tsx
+   218→"use client"; // ✅ REQUIRED — Error Boundaries are class components (client-only)
+   219→
+   220→import React, { Component, type ErrorInfo, type ReactNode } from 'react';
+   221→
+   222→interface Props {
+   223→  children: ReactNode;
+   224→  fallback: ReactNode | ((props: { reset: () => void }) => ReactNode);
+   225→}
+   226→
+   227→interface State {
+   228→  hasError: boolean;
+   229→  error: Error | null;
+   230→}
+   231→
+   232→export class ErrorBoundary extends Component<Props, State> {
+   233→  constructor(props: Props) {
+   234→    super(props);
+   235→    this.state = { hasError: false, error: null };
+   236→  }
+   237→
+   238→  static getDerivedStateFromError(error: Error): State {
+   239→    return { hasError: true, error };
+   240→  }
+   241→
+   242→  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+   243→    console.error('[ErrorBoundary]', error.message, errorInfo.componentStack);
+   244→  }
+   245→
+   246→  handleReset = (): void => {
+   247→    this.setState({ hasError: false, error: null });
+   248→  };
+   249→
+   250→  render(): ReactNode {
+   251→    if (this.state.hasError) {
+   252→      const { fallback } = this.props;
+   253→      if (typeof fallback === 'function') {
+   254→        return fallback({ reset: this.handleReset });
+   255→      }
+   256→      return fallback;
+   257→    }
+   258→    return this.props.children;
+   259→  }
+   260→}
+   261→```
+   262→
+   263→### 4.4 Defensive API Client (Bounded Retry + AbortController)
+   264→
+   265→```typescript
+   266→// lib/anilist.ts
+   267→import { AnimeSchema, PageInfoSchema, type Anime, type PageInfo } from '@/types/anime';
+   268→import { TRENDING_QUERY, POPULAR_QUERY, SEARCH_QUERY, ANIME_DETAIL_QUERY } from './anilist-queries';
+   269→import { z } from 'zod';
+   270→
+   271→const ANILIST_URL = 'https://graphql.anilist.co';
+   272→const MAX_RETRIES = 1;
+   273→const RETRY_DELAY_MS = 2000;
+   274→const REQUEST_TIMEOUT_MS = 10000;
+   275→
+   276→interface FetchResult {
+   277→  data: Anime[];
+   278→  pageInfo: PageInfo;
+   279→}
+   280→
+   281→export async function fetchFromAniList(
+   282→  query: string,
+   283→  variables: Record<string, unknown>,
+   284→  _retryCount = 0 // ✅ Bounded retry counter
+   285→): Promise<FetchResult | null> {
+   286→  // ✅ Bug #18: AbortController for request timeout
+   287→  const controller = new AbortController();
+   288→  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+   289→
+   290→  try {
+   291→    const response = await fetch(ANILIST_URL, {
+   292→      method: 'POST',
+   293→      headers: { 
+   294→        'Content-Type': 'application/json',
+   295→        'Accept': 'application/json',
+   296→      },
+   297→      body: JSON.stringify({ query, variables }),
+   298→      signal: controller.signal,
+   299→      next: { revalidate: 300 }, // ✅ ISR: cache for 5 minutes
+   300→    });
+   301→
+   302→    if (!response.ok) {
+   303→      if (response.status === 429 && _retryCount < MAX_RETRIES) {
+   304→        // ✅ Bug #3: Bounded retry (MAX 1 retry, not infinite recursion)
+   305→        const retryAfter = response.headers.get('Retry-After');
+   306→        const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : RETRY_DELAY_MS;
+   307→        await new Promise(r => setTimeout(r, delay));
+   308→        return fetchFromAniList(query, variables, _retryCount + 1);
+   309→      }
+   310→      console.error(`[AniList] HTTP ${response.status}: ${response.statusText}`);
+   311→      return null;
+   312→    }
+   313→
+   314→    const json = await response.json();
+   315→    
+   316→    // Validate response shape before accessing nested properties
+   317→    const media = json?.data?.Page?.media;
+   318→    const pageInfoRaw = json?.data?.Page?.pageInfo;
+   319→    
+   320→    if (!Array.isArray(media)) {
+   321→      console.error('[AniList] Unexpected response shape — media is not an array');
+   322→      return null;
+   323→    }
+   324→
+   325→    // ✅ Validate each item individually — skip bad items instead of crashing
+   326→    const validated = media
+   327→      .map((item: unknown) => AnimeSchema.safeParse(item))
+   328→      .filter((r): r is z.SafeParseSuccess<Anime> => r.success)
+   329→      .map(r => r.data);
+   330→
+   331→    const pageInfo = PageInfoSchema.safeParse(pageInfoRaw);
+   332→
+   333→    return {
+   334→      data: validated,
+   335→      pageInfo: pageInfo.success
+   336→        ? pageInfo.data
+   337→        : { currentPage: 1, hasNextPage: false, lastPage: null, perPage: 20, total: null },
+   338→    };
+   339→  } catch (error) {
+   340→    if (error instanceof DOMException && error.name === 'AbortError') {
+   341→      console.error('[AniList] Request timed out after', REQUEST_TIMEOUT_MS, 'ms');
+   342→    } else {
+   343→      console.error('[AniList] Fetch failed:', error);
+   344→    }
+   345→    return null;
+   346→  } finally {
+   347→    clearTimeout(timeout); // ✅ Bug #19: Always clean up timeout
+   348→  }
+   349→}
+   350→
+   351→// ─── Convenience Functions ───
+   352→export async function fetchTrending(page = 1, perPage = 20): Promise<FetchResult | null> {
+   353→  return fetchFromAniList(TRENDING_QUERY, { page, perPage });
+   354→}
+   355→
+   356→export async function fetchPopular(page = 1, perPage = 20): Promise<FetchResult | null> {
+   357→  return fetchFromAniList(POPULAR_QUERY, { page, perPage });
+   358→}
+   359→
+   360→export async function fetchSearch(
+   361→  search: string,
+   362→  page = 1,
+   363→  perPage = 20,
+   364→  genres?: string[],
+   365→  sort?: string
+   366→): Promise<FetchResult | null> {
+   367→  return fetchFromAniList(SEARCH_QUERY, { search, page, perPage, genres, sort: sort ? [sort] : undefined });
+   368→}
+   369→```
+   370→
+   371→### 4.5 Exact GraphQL Query Strings
+   372→
+   373→```typescript
+   374→// lib/anilist-queries.ts
+   375→
+   376→const MEDIA_FIELDS = `
+   377→  id
+   378→  title {
+   379→    romaji
+   380→    english
+   381→    native
+   382→  }
+   383→  coverImage {
+   384→    large
+   385→    color
+   386→  }
+   387→  bannerImage
+   388→  description
+   389→  averageScore
+   390→  episodes
+   391→  status
+   392→  genres
+   393→  season
+   394→  seasonYear
+   395→  format
+   396→  trending
+   397→  popularity
+   398→  trailer {
+   399→    id
+   400→    site
+   401→  }
+   402→  nextAiringEpisode {
+   403→    airingAt
+   404→    episode
+   405→    timeUntilAiring
+   406→  }
+   407→`;
+   408→
+   409→export const TRENDING_QUERY = `
+   410→  query ($page: Int, $perPage: Int) {
+   411→    Page(page: $page, perPage: $perPage) {
+   412→      pageInfo {
+   413→        currentPage
+   414→        hasNextPage
+   415→        lastPage
+   416→        perPage
+   417→        total
+   418→      }
+   419→      media(type: ANIME, sort: TRENDING_DESC) {
+   420→        ${MEDIA_FIELDS}
+   421→      }
+   422→    }
+   423→  }
+   424→`;
+   425→
+   426→export const POPULAR_QUERY = `
+   427→  query ($page: Int, $perPage: Int) {
+   428→    Page(page: $page, perPage: $perPage) {
+   429→      pageInfo {
+   430→        currentPage
+   431→        hasNextPage
+   432→        lastPage
+   433→        perPage
+   434→        total
+   435→      }
+   436→      media(type: ANIME, sort: POPULARITY_DESC) {
+   437→        ${MEDIA_FIELDS}
+   438→      }
+   439→    }
+   440→  }
+   441→`;
+   442→
+   443→export const SEARCH_QUERY = `
+   444→  query ($search: String, $page: Int, $perPage: Int, $genres: [String], $sort: [MediaSort]) {
+   445→    Page(page: $page, perPage: $perPage) {
+   446→      pageInfo {
+   447→        currentPage
+   448→        hasNextPage
+   449→        lastPage
+   450→        perPage
+   451→        total
+   452→      }
+   453→      media(type: ANIME, search: $search, genre_in: $genres, sort: $sort) {
+   454→        ${MEDIA_FIELDS}
+   455→      }
+   456→    }
+   457→  }
+   458→`;
+   459→
+   460→export const ANIME_DETAIL_QUERY = `
+   461→  query ($id: Int) {
+   462→    Media(id: $id, type: ANIME) {
+   463→      ${MEDIA_FIELDS}
+   464→      relations {
+   465→        edges {
+   466→          relationType
+   467→          node {
+   468→            id
+   469→            title { romaji english }
+   470→            coverImage { large }
+   471→            format
+   472→            status
+   473→          }
+   474→        }
+   475→      }
+   476→      characters(sort: ROLE, perPage: 12) {
+   477→        edges {
+   478→          role
+   479→          node {
+   480→            id
+   481→            name { full }
+   482→            image { medium }
+   483→          }
+   484→        }
+   485→      }
+   486→      recommendations(perPage: 8) {
+   487→        nodes {
+   488→          mediaRecommendation {
+   489→            id
+   490→            title { romaji english }
+   491→            coverImage { large }
+   492→            averageScore
+   493→          }
+   494→        }
+   495→      }
+   496→    }
+   497→  }
+   498→`;
+   499→```
+   500→
+   501→### 4.6 LocalStorage Hook (SSR-Safe)
+   502→
+   503→```typescript
+   504→// hooks/useWatchHistory.ts
+   505→"use client"; // consumed only in client components
+   506→
+   507→import { useState, useEffect, useCallback } from 'react';
+   508→
+   509→export interface WatchHistoryEntry {
+   510→  animeId: number;
+   511→  episodeId: string;
+   512→  episodeNumber: number;
+   513→  timestamp: number;     // seconds into the episode
+   514→  duration: number;      // total episode duration
+   515→  title: string;
+   516→  coverImage: string;
+   517→  updatedAt: number;     // Date.now()
+   518→}
+   519→
+   520→const STORAGE_KEY = 'xan-watch-history';
+   521→const MAX_HISTORY = 50;
+   522→
+   523→// ✅ Bug #16: Never access localStorage at module scope or during SSR
+   524→function readHistory(): WatchHistoryEntry[] {
+   525→  if (typeof window === 'undefined') return []; // SSR guard
+   526→  try {
+   527→    const raw = localStorage.getItem(STORAGE_KEY);
+   528→    return raw ? JSON.parse(raw) : [];
+   529→  } catch {
+   530→    console.error('[WatchHistory] Failed to read localStorage');
+   531→    return [];
+   532→  }
+   533→}
+   534→
+   535→function writeHistory(entries: WatchHistoryEntry[]): void {
+   536→  if (typeof window === 'undefined') return; // SSR guard
+   537→  try {
+   538→    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_HISTORY)));
+   539→  } catch {
+   540→    console.error('[WatchHistory] Failed to write localStorage');
+   541→  }
+   542→}
+   543→
+   544→export function useWatchHistory() {
+   545→  // ✅ Initialize with empty array — populate in useEffect to avoid hydration mismatch
+   546→  const [history, setHistory] = useState<WatchHistoryEntry[]>([]);
+   547→  const [isLoaded, setIsLoaded] = useState(false);
+   548→
+   549→  // ✅ Only read from localStorage after mount (client-side)
+   550→  useEffect(() => {
+   551→    setHistory(readHistory());
+   552→    setIsLoaded(true);
+   553→  }, []);
+   554→
+   555→  const addEntry = useCallback((entry: WatchHistoryEntry) => {
+   556→    setHistory(prev => {
+   557→      const filtered = prev.filter(e => e.animeId !== entry.animeId || e.episodeId !== entry.episodeId);
+   558→      const updated = [{ ...entry, updatedAt: Date.now() }, ...filtered];
+   559→      writeHistory(updated);
+   560→      return updated;
+   561→    });
+   562→  }, []);
+   563→
+   564→  const removeEntry = useCallback((animeId: number) => {
+   565→    setHistory(prev => {
+   566→      const filtered = prev.filter(e => e.animeId !== animeId);
+   567→      writeHistory(filtered);
+   568→      return filtered;
+   569→    });
+   570→  }, []);
+   571→
+   572→  const clearHistory = useCallback(() => {
+   573→    setHistory([]);
+   574→    writeHistory([]);
+   575→  }, []);
+   576→
+   577→  return { history, isLoaded, addEntry, removeEntry, clearHistory };
+   578→}
+   579→```
+   580→
+   581→> [!CAUTION]
+   582→> **Bug #16 (NEW):** Even with `"use client"`, components are SSR-rendered first. Accessing `localStorage` during SSR throws `ReferenceError: window is not defined`. The hook now uses `typeof window === 'undefined'` guard + `useEffect` for initial read + `isLoaded` flag to prevent hydration mismatch.
+   583→
+   584→### 4.7 Null Safety — Component Pattern
+   585→
+   586→```typescript
+   587→// EVERY component MUST follow this pattern:
+   588→
+   589→import Image from 'next/image';
+   590→import { getTitle, type Anime } from '@/types/anime';
+   591→
+   592→function AnimeCard({ anime }: { anime: Anime }) {
+   593→  const title = getTitle(anime.title); // ✅ centralized, never inline
+   594→  const image = anime.coverImage?.large ?? '/placeholder-card.png';
+   595→  const score = anime.averageScore != null ? `${anime.averageScore}%` : 'N/A';
+   596→  const episodes = anime.episodes != null ? `${anime.episodes} eps` : 'Ongoing';
+   597→  const color = anime.coverImage?.color ?? '#e94560';
+   598→
+   599→  return (
+   600→    <div>
+   601→      {/* ✅ Always use next/image with remotePatterns, never raw <img> */}
+   602→      <Image
+   603→        src={image}
+   604→        alt={title}
+   605→        width={240}
+   606→        height={360}
+   607→        className="object-cover"
+   608→        placeholder="blur"
+   609→        blurDataURL="data:image/png;base64,iVBOR..." // tiny base64 placeholder
+   610→      />
+   611→      <p>{title}</p>
+   612→      <p>{score}</p>
+   613→      <p>{episodes}</p>
+   614→    </div>
+   615→  );
+   616→}
+   617→```
+   618→
+   619→---
+   620→
+   621→## 5. Configuration Files (Exact Contents)
+   622→
+   623→### 5.1 `next.config.ts`
+   624→
+   625→```typescript
+   626→import type { NextConfig } from 'next';
+   627→
+   628→const nextConfig: NextConfig = {
+   629→  // ✅ Bug #15: Use remotePatterns, NOT deprecated domains
+   630→  images: {
+   631→    remotePatterns: [
+   632→      {
+   633→        protocol: 'https',
+   634→        hostname: 's4.anilist.co',
+   635→        pathname: '/file/anilistcdn/**',
+   636→      },
+   637→      {
+   638→        protocol: 'https',
+   639→        hostname: 'img.youtube.com',
+   640→        pathname: '/vi/**',
+   641→      },
+   642→    ],
+   643→  },
+   644→  // Turbopack is enabled by default with `next dev --turbopack`
+   645→};
+   646→
+   647→export default nextConfig;
+   648→```
+   649→
+   650→### 5.2 `app/globals.css` (TailwindCSS v4 — No Config File)
+   651→
+   652→```css
+   653→@import "tailwindcss";
+   654→@import "tw-animate-css";
+   655→
+   656→@custom-variant dark (&:is(.dark *));
+   657→
+   658→/* ─── Design Tokens via @theme (replaces tailwind.config.ts) ─── */
+   659→@theme inline {
+   660→  --color-xan-crimson: #e94560;
+   661→  --color-xan-violet: #7B2FF7;
+   662→  --color-xan-dark: #0a0a0a;
+   663→  --color-xan-surface: hsl(240 10% 10%);
+   664→  --color-xan-muted: #a1a1aa;
+   665→  --color-xan-border: rgba(255, 255, 255, 0.08);
+   666→  --color-xan-card: rgba(255, 255, 255, 0.04);
+   667→  --color-xan-card-hover: rgba(255, 255, 255, 0.08);
+   668→  --color-xan-landing-bg: #f0f0f0;
+   669→
+   670→  --color-background: var(--background);
+   671→  --color-foreground: var(--foreground);
+   672→  --color-primary: var(--primary);
+   673→  --color-primary-foreground: var(--primary-foreground);
+   674→  --color-secondary: var(--secondary);
+   675→  --color-secondary-foreground: var(--secondary-foreground);
+   676→  --color-muted: var(--muted);
+   677→  --color-muted-foreground: var(--muted-foreground);
+   678→  --color-accent: var(--accent);
+   679→  --color-accent-foreground: var(--accent-foreground);
+   680→  --color-destructive: var(--destructive);
+   681→  --color-border: var(--border);
+   682→  --color-input: var(--input);
+   683→  --color-ring: var(--ring);
+   684→
+   685→  --font-sans: var(--font-nunito), var(--font-inter), system-ui, sans-serif;
+   686→  --font-display: var(--font-outfit), system-ui, sans-serif;
+   687→}
+   688→
+   689→/* ─── Custom Scrollbar ─── */
+   690→* { scrollbar-width: thin; scrollbar-color: rgba(155,155,155,0.5) transparent; }
+   691→*::-webkit-scrollbar { width: 6px; height: 6px; }
+   692→*::-webkit-scrollbar-track { background: transparent; }
+   693→*::-webkit-scrollbar-thumb { background-color: rgba(155,155,155,0.5); border-radius: 20px; }
+   694→*::-webkit-scrollbar-thumb:hover { background-color: rgba(155,155,155,0.8); }
+   695→.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+   696→.no-scrollbar::-webkit-scrollbar { display: none; }
+   697→
+   698→/* ─── Gradient Animation ─── */
+   699→@keyframes gradient-shift {
+   700→  0%, 100% { background-position: 0% 50%; }
+   701→  50% { background-position: 100% 50%; }
+   702→}
+   703→.animate-gradient { background-size: 200% 200%; animation: gradient-shift 8s ease infinite; }
+   704→
+   705→/* ─── Skeleton Shimmer ─── */
+   706→@keyframes shimmer {
+   707→  0% { background-position: -200% 0; }
+   708→  100% { background-position: 200% 0; }
+   709→}
+   710→.animate-shimmer {
+   711→  background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.05) 50%, transparent 75%);
+   712→  background-size: 200% 100%;
+   713→  animation: shimmer 1.5s infinite;
+   714→}
+   715→```
+   716→
+   717→### 5.3 `app/layout.tsx` (Root Layout — Server Component)
+   718→
+   719→```typescript
+   720→// app/layout.tsx — This is a SERVER Component (no "use client")
+   721→import type { Metadata } from "next";
+   722→import { Nunito, Inter, Outfit } from "next/font/google";
+   723→import { ThemeProvider } from "@/components/theme-provider";
+   724→import "./globals.css";
+   725→
+   726→// ✅ Font variables — available in CSS via var(--font-nunito), etc.
+   727→const nunito = Nunito({ variable: "--font-nunito", subsets: ["latin"] });
+   728→const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
+   729→const outfit = Outfit({ variable: "--font-outfit", subsets: ["latin"] });
+   730→
+   731→export const metadata: Metadata = {
+   732→  metadataBase: new URL("https://xan.vercel.app"), // Update with real URL
+   733→  title: {
+   734→    default: "XAN | Stream Anime",
+   735→    template: "%s | XAN",
+   736→  },
+   737→  description: "Stream anime without the noise. Discover, search, and watch your favorite anime.",
+   738→  applicationName: "XAN",
+   739→  keywords: ["anime streaming", "watch anime online", "anime", "XAN"],
+   740→  openGraph: {
+   741→    type: "website",
+   742→    siteName: "XAN",
+   743→    title: "XAN | Stream Anime",
+   744→    description: "Stream anime without the noise.",
+   745→  },
+   746→};
+   747→
+   748→export default function RootLayout({ children }: { children: React.ReactNode }) {
+   749→  return (
+   750→    // ✅ Bug #14: suppressHydrationWarning REQUIRED for next-themes
+   751→    // Without this: hydration mismatch error because server doesn't know user's theme
+   752→    <html
+   753→      lang="en"
+   754→      suppressHydrationWarning
+   755→      className={`${nunito.variable} ${inter.variable} ${outfit.variable}`}
+   756→    >
+   757→      <body className="font-sans antialiased">
+   758→        <ThemeProvider
+   759→          attribute="class"
+   760→          defaultTheme="dark"
+   761→          enableSystem
+   762→          disableTransitionOnChange
+   763→        >
+   764→          {children}
+   765→        </ThemeProvider>
+   766→      </body>
+   767→    </html>
+   768→  );
+   769→}
+   770→```
+   771→
+   772→### 5.4 `components/theme-provider.tsx`
+   773→
+   774→```typescript
+   775→"use client"; // ✅ REQUIRED — uses React context
+   776→
+   777→import * as React from "react";
+   778→import { ThemeProvider as NextThemesProvider } from "next-themes";
+   779→
+   780→export function ThemeProvider({
+   781→  children,
+   782→  ...props
+   783→}: React.ComponentProps<typeof NextThemesProvider>) {
+   784→  return <NextThemesProvider {...props}>{children}</NextThemesProvider>;
+   785→}
+   786→```
+   787→
+   788→### 5.5 `components.json` (shadcn/ui for TW4)
+   789→
+   790→```json
+   791→{
+   792→  "$schema": "https://ui.shadcn.com/schema.json",
+   793→  "style": "default",
+   794→  "rsc": true,
+   795→  "tsx": true,
+   796→  "tailwind": {
+   797→    "config": "",
+   798→    "css": "app/globals.css",
+   799→    "baseColor": "zinc",
+   800→    "cssVariables": true
+   801→  },
+   802→  "aliases": {
+   803→    "components": "@/components",
+   804→    "utils": "@/lib/utils",
+   805→    "ui": "@/components/ui",
+   806→    "lib": "@/lib",
+   807→    "hooks": "@/hooks"
+   808→  }
+   809→}
+   810→```
+   811→
+   812→### 5.6 `.env.example`
+   813→
+   814→```env
+   815→# ─── REQUIRED: None! XAN works with AniList only ───
+   816→
+   817→# ─── OPTIONAL: Streaming Backend (unlocks full episode playback) ───
+   818→# NEXT_PUBLIC_BACKEND_URL=""
+   819→
+   820→# ─── OPTIONAL: Skip Intro/Outro timestamps ───
+   821→# NEXT_PUBLIC_SKIP_TIMES_URL="https://api.aniskip.com/"
+   822→
+   823→# ─── OPTIONAL: CORS proxy for backend requests ───
+   824→# NEXT_PUBLIC_PROXY_URL=""
+   825→```
+   826→
+   827→---
+   828→
+   829→## 6. Project Structure (Every File Annotated)
+   830→
+   831→```
+   832→xan/
+   833→├── public/
+   834→│   └── placeholder-card.png          # ✅ Bug #23: Fallback for missing cover images
+   835→├── app/
+   836→│   ├── layout.tsx                     # Server Component — fonts, ThemeProvider, metadata
+   837→│   ├── page.tsx                       # "use client" — motion + useRouter (landing)
+   838→│   ├── globals.css                    # TW4 @theme tokens — NO tailwind.config.ts
+   839→│   ├── not-found.tsx                  # Server Component — custom 404
+   840→│   ├── error.tsx                      # "use client" REQUIRED by Next.js
+   841→│   ├── loading.tsx                    # Server Component — simple skeleton (no motion)
+   842→│   └── (app)/
+   843→│       ├── layout.tsx                 # Server Component — wraps Navbar + Footer
+   844→│       ├── loading.tsx                # Server Component — app skeleton
+   845→│       ├── home/
+   846→│       │   └── page.tsx              # Server Component (async) — fetches AniList data
+   847→│       ├── anime/
+   848→│       │   └── [id]/
+   849→│       │       └── page.tsx          # Server Component (async) — await params, generateMetadata
+   850→│       ├── watch/
+   851→│       │   └── [id]/
+   852→│       │       └── page.tsx          # "use client" — player, localStorage
+   853→│       ├── search/
+   854→│       │   └── page.tsx              # "use client" — input state, URL params
+   855→│       ├── trending/
+   856→│       │   └── page.tsx              # Server Component (async)
+   857→│       └── history/
+   858→│           └── page.tsx              # "use client" — reads localStorage
+   859→├── components/
+   860→│   ├── landing/
+   861→│   │   └── LandingHero.tsx           # "use client" — motion animations
+   862→│   ├── layout/
+   863→│   │   ├── Navbar.tsx                # "use client" — scroll listener, state
+   864→│   │   └── Footer.tsx                # Server Component
+   865→│   ├── cards/
+   866→│   │   ├── AnimeCard.tsx             # "use client" — motion hover animations
+   867→│   │   └── AnimeCardSkeleton.tsx     # Server Component
+   868→│   ├── home/
+   869→│   │   ├── TrendingCarousel.tsx      # "use client" — scroll state
+   870→│   │   ├── PopularGrid.tsx           # Server Component
+   871→│   │   ├── ContinueWatching.tsx      # "use client" — localStorage
+   872→│   │   └── CategoryTabs.tsx          # "use client" — tab state
+   873→│   ├── anime/
+   874→│   │   ├── AnimeHero.tsx             # Server Component
+   875→│   │   ├── AnimeInfo.tsx             # Server Component
+   876→│   │   ├── EpisodeGrid.tsx           # "use client" — interactivity
+   877→│   │   ├── CharacterList.tsx         # Server Component
+   878→│   │   └── RelatedAnime.tsx          # Server Component
+   879→│   ├── watch/
+   880→│   │   ├── VideoPlayer.tsx           # "use client" — dynamic(() => import(...), { ssr: false })
+   881→│   │   ├── EpisodePanel.tsx          # "use client"
+   882→│   │   └── PlayerFallback.tsx        # "use client" — YouTube iframe
+   883→│   ├── search/
+   884→│   │   ├── SearchBar.tsx             # "use client"
+   885→│   │   └── FilterPanel.tsx           # "use client"
+   886→│   ├── ui/                           # shadcn components (auto-generated)
+   887→│   ├── ErrorBoundary.tsx             # "use client" REQUIRED
+   888→│   ├── ErrorCard.tsx                 # Server Component
+   889→│   └── theme-provider.tsx            # "use client" REQUIRED
+   890→├── hooks/
+   891→│   ├── useWatchHistory.ts            # Used only in "use client" components
+   892→│   ├── useDebounce.ts
+   893→│   └── useMediaQuery.ts
+   894→├── lib/
+   895→│   ├── anilist.ts                    # Pure async functions (server + client safe)
+   896→│   ├── anilist-queries.ts            # GraphQL query strings
+   897→│   ├── backend.ts                    # Optional backend client
+   898→│   ├── utils.ts                      # cn(), etc.
+   899→│   └── constants.ts                  # Genre lists, config
+   900→├── types/
+   901→│   ├── anime.ts                      # Zod schemas + helpers
+   902→│   └── api.ts                        # Response types
+   903→├── .env.local
+   904→├── .env.example
+   905→├── components.json
+   906→├── next.config.ts
+   907→├── tsconfig.json
+   908→└── package.json
+   909→```
+   910→
+   911→---
+   912→
+   913→## 7. Phase 1: Landing Page (CURRENT)
+   914→
+   915→> **Deliverable:** `/` route only. Zero external API calls. Zero bugs.
+   916→
+   917→### 7.1 Files to Create
+   918→
+   919→| File | Directive | Purpose |
+   920→|:---|:---|:---|
+   921→| `app/layout.tsx` | Server | Fonts (Nunito + Inter + Outfit), ThemeProvider, `<html suppressHydrationWarning>` |
+   922→| `app/globals.css` | — | `@import "tailwindcss"`, `@theme inline`, scrollbar, gradient keyframes |
+   923→| `app/page.tsx` | `"use client"` | Landing page: motion + useRouter |
+   924→| `components/landing/LandingHero.tsx` | `"use client"` | Hero section: gradient bg, logo, tagline, CTA, keyboard |
+   925→| `components/theme-provider.tsx` | `"use client"` | next-themes wrapper |
+   926→| `components/ui/button.tsx` | via shadcn | shadcn Button |
+   927→| `components/ui/badge.tsx` | via shadcn | shadcn Badge |
+   928→| `lib/utils.ts` | — (pure) | `cn()` using clsx + tailwind-merge |
+   929→| `next.config.ts` | — | `images.remotePatterns` for AniList CDN |
+   930→| `components.json` | — | shadcn config with `"config": ""` for TW4 |
+   931→| `.env.example` | — | Documented template |
+   932→
+   933→### 7.2 Landing Page — Exact Implementation Pattern
+   934→
+   935→```typescript
+   936→// app/page.tsx
+   937→"use client";
+   938→
+   939→import { LandingHero } from "@/components/landing/LandingHero";
+   940→
+   941→export default function LandingPage() {
+   942→  return <LandingHero />;
+   943→}
+   944→```
+   945→
+   946→```typescript
+   947→// components/landing/LandingHero.tsx
+   948→"use client";
+   949→
+   950→import { motion } from "motion/react"; // ✅ NOT "framer-motion"
+   951→import { useRouter } from "next/navigation"; // ✅ NOT "next/router"
+   952→import { useEffect } from "react";
+   953→import { Button } from "@/components/ui/button";
+   954→import { Badge } from "@/components/ui/badge";
+   955→import { ArrowRight, CornerDownLeft } from "lucide-react";
+   956→
+   957→const fadeUp = (delay: number, y = 20, duration = 0.7) => ({
+   958→  initial: { opacity: 0, y },
+   959→  animate: { opacity: 1, y: 0 },
+   960→  transition: { duration, delay, ease: [0.25, 0.4, 0.25, 1] as const },
+   961→});
+   962→
+   963→export function LandingHero() {
+   964→  const router = useRouter();
+   965→
+   966→  useEffect(() => {
+   967→    const handler = (e: KeyboardEvent) => {
+   968→      const target = e.target as HTMLElement;
+   969→      // ✅ Bug #10: Check all editable element types
+   970→      if (
+   971→        target instanceof HTMLInputElement ||
+   972→        target instanceof HTMLTextAreaElement ||
+   973→        target.isContentEditable
+   974→      ) return;
+   975→      if (e.key === "Enter") router.push("/home");
+   976→    };
+   977→    window.addEventListener("keydown", handler);
+   978→    return () => window.removeEventListener("keydown", handler); // ✅ Bug #19: Cleanup
+   979→  }, [router]);
+   980→
+   981→  return (
+   982→    <section className="w-full min-h-screen p-2 md:p-3 bg-xan-landing-bg">
+   983→      <div className="relative w-full h-[calc(100vh-16px)] md:h-[calc(100vh-24px)] rounded-[1.5rem] md:rounded-[2.5rem] overflow-hidden flex items-center justify-center">
+   984→        {/* Animated gradient background */}
+   985→        <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0a] via-[#1a0a2e] to-[#0a0a0a] animate-gradient" />
+   986→        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-black/20" />
+   987→
+   988→        {/* Content */}
+   989→        <div className="relative z-10 text-center px-4 max-w-2xl mx-auto">
+   990→          <motion.h1
+   991→            {...fadeUp(0.2, 30)}
+   992→            className="font-display text-7xl md:text-8xl font-extrabold text-white tracking-tight"
+   993→          >
+   994→            XAN
+   995→          </motion.h1>
+   996→
+   997→          <motion.p
+   998→            {...fadeUp(0.4, 20)}
+   999→            className="mt-4 text-lg md:text-xl text-white/60 font-sans"
+  1000→          >
+  1001→            Stream anime without the noise.
+  1002→          </motion.p>
+  1003→
+  1004→          <motion.div {...fadeUp(0.6, 16)} className="mt-8">
+  1005→            <Button
+  1006→              size="lg"
+  1007→              onClick={() => router.push("/home")}
+  1008→              className="bg-gradient-to-r from-xan-crimson to-xan-violet hover:opacity-90 text-white px-8 py-6 text-lg rounded-full shadow-[0_0_30px_rgba(233,69,96,0.3)] hover:shadow-[0_0_50px_rgba(233,69,96,0.5)] transition-all"
+  1009→            >
+  1010→              Start Watching
+  1011→              <ArrowRight className="ml-2 h-5 w-5" />
+  1012→            </Button>
+  1013→          </motion.div>
+  1014→
+  1015→          <motion.div {...fadeUp(0.8, 12)} className="mt-6">
+  1016→            <Badge variant="secondary" className="bg-white/10 text-white/50 border-white/10">
+  1017→              Press Enter to explore
+  1018→              <CornerDownLeft className="ml-1.5 h-3 w-3" />
+  1019→            </Badge>
+  1020→          </motion.div>
+  1021→        </div>
+  1022→      </div>
+  1023→    </section>
+  1024→  );
+  1025→}
+  1026→```
+  1027→
+  1028→### 7.3 Phase 1 Verification
+  1029→
+  1030→```bash
+  1031→# Build gates
+  1032→npx tsc --noEmit          # ✅ Zero type errors
+  1033→npx next lint             # ✅ Zero warnings
+  1034→npm run build             # ✅ Successful production build
+  1035→```
+  1036→
+  1037→**Manual checks:**
+  1038→- [ ] No console errors on load
+  1039→- [ ] Gradient animates smoothly
+  1040→- [ ] All 4 elements fade in with stagger
+  1041→- [ ] Button hover: glow intensifies
+  1042→- [ ] Button click: navigates to `/home` (shows default 404)
+  1043→- [ ] `Enter` key: navigates to `/home`
+  1044→- [ ] Keyboard does NOT fire in `<input>` or `contentEditable`
+  1045→- [ ] Responsive: 320px, 768px, 1024px, 1440px
+  1046→- [ ] CLS = 0 (no layout shift)
+  1047→- [ ] Lighthouse Performance ≥ 95
+  1048→- [ ] Imports: `"motion/react"` ✅, `"next/navigation"` ✅
+  1049→- [ ] `<html suppressHydrationWarning>` present ✅
+  1050→- [ ] No `tailwind.config.ts` file exists ✅
+  1051→
+  1052→---
+  1053→
+  1054→## 8. Phase 2: Layout + Home Page
+  1055→
+  1056→### What Gets Built
+  1057→- `(app)/layout.tsx` — Navbar + Footer (Server Component)
+  1058→- `Navbar.tsx` (`"use client"`) — scroll-aware bg, search icon, nav links, theme toggle
+  1059→- `Footer.tsx` (Server) — brand, links
+  1060→- `(app)/home/page.tsx` (Server, async) — fetches AniList, wraps sections in Suspense
+  1061→- `AnimeCard.tsx` (`"use client"`) — hover anims, `Image` with `remotePatterns`
+  1062→- `AnimeCardSkeleton.tsx` (Server) — shimmer placeholder
+  1063→- `TrendingCarousel.tsx` (`"use client"`) — horizontal scroll
+  1064→- `PopularGrid.tsx` (Server) — responsive grid
+  1065→- `CategoryTabs.tsx` (`"use client"`) — genre tabs
+  1066→- `ErrorBoundary.tsx` (`"use client"`) — per-section error isolation
+  1067→- `ErrorCard.tsx` (Server) — error fallback UI
+  1068→- `lib/anilist.ts` — API client with bounded retry + AbortController
+  1069→- `lib/anilist-queries.ts` — exact GraphQL queries
+  1070→- `types/anime.ts` — Zod schemas + helpers
+  1071→
+  1072→### Home Page Pattern (Server Component + Suspense)
+  1073→
+  1074→```typescript
+  1075→// (app)/home/page.tsx — Server Component (async)
+  1076→import { Suspense } from 'react';
+  1077→import { fetchTrending, fetchPopular } from '@/lib/anilist';
+  1078→import { TrendingCarousel } from '@/components/home/TrendingCarousel';
+  1079→import { PopularGrid } from '@/components/home/PopularGrid';
+  1080→import { AnimeCardSkeleton } from '@/components/cards/AnimeCardSkeleton';
+  1081→import { ErrorBoundary } from '@/components/ErrorBoundary';
+  1082→import { ErrorCard } from '@/components/ErrorCard';
+  1083→
+  1084→export default function HomePage() {
+  1085→  return (
+  1086→    <main>
+  1087→      {/* ✅ Bug #21: Each async section MUST be wrapped in Suspense */}
+  1088→      <ErrorBoundary fallback={({ reset }) => <ErrorCard message="Couldn't load trending" onRetry={reset} />}>
+  1089→        <Suspense fallback={<div className="grid grid-cols-2 md:grid-cols-5 gap-4">{Array.from({ length: 10 }, (_, i) => <AnimeCardSkeleton key={i} />)}</div>}>
+  1090→          <TrendingSection />
+  1091→        </Suspense>
+  1092→      </ErrorBoundary>
+  1093→
+  1094→      <ErrorBoundary fallback={({ reset }) => <ErrorCard message="Couldn't load popular" onRetry={reset} />}>
+  1095→        <Suspense fallback={<div className="grid grid-cols-2 md:grid-cols-5 gap-4">{Array.from({ length: 10 }, (_, i) => <AnimeCardSkeleton key={i} />)}</div>}>
+  1096→          <PopularSection />
+  1097→        </Suspense>
+  1098→      </ErrorBoundary>
+  1099→    </main>
+  1100→  );
+  1101→}
+  1102→
+  1103→// Async Server Components — can use await directly
+  1104→async function TrendingSection() {
+  1105→  const result = await fetchTrending(1, 10);
+  1106→  if (!result || result.data.length === 0) return <p className="text-muted-foreground">No trending anime found.</p>;
+  1107→  return <TrendingCarousel anime={result.data} />;
+  1108→}
+  1109→
+  1110→async function PopularSection() {
+  1111→  const result = await fetchPopular(1, 20);
+  1112→  if (!result || result.data.length === 0) return <p className="text-muted-foreground">No popular anime found.</p>;
+  1113→  return <PopularGrid anime={result.data} pageInfo={result.pageInfo} />;
+  1114→}
+  1115→```
+  1116→
+  1117→### Phase 2 Verification
+  1118→- [ ] AniList data loads
+  1119→- [ ] Skeleton shows during load
+  1120→- [ ] Error boundary catches failures
+  1121→- [ ] `next/image` loads AniList images (remotePatterns working)
+  1122→- [ ] Navbar scroll behavior
+  1123→- [ ] Responsive all breakpoints
+  1124→- [ ] Build passes
+  1125→
+  1126→---
+  1127→
+  1128→## 9. Phase 3: Anime Detail Page
+  1129→
+  1130→### Key Pattern: Next.js 15 Async Params
+  1131→
+  1132→```typescript
+  1133→// (app)/anime/[id]/page.tsx — Server Component
+  1134→import type { Metadata } from 'next';
+  1135→
+  1136→// ✅ Bug #17: Next.js 15 params are Promises — MUST await
+  1137→type Props = {
+  1138→  params: Promise<{ id: string }>;
+  1139→};
+  1140→
+  1141→export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  1142→  const { id } = await params; // ✅ await the Promise
+  1143→  // Fetch data for SEO (Next.js memoizes this automatically)
+  1144→  const anime = await fetchAnimeDetail(parseInt(id, 10));
+  1145→  if (!anime) return { title: 'Anime Not Found' };
+  1146→  return {
+  1147→    title: getTitle(anime.title),
+  1148→    description: sanitizeDescription(anime.description),
+  1149→  };
+  1150→}
+  1151→
+  1152→export default async function AnimeDetailPage({ params }: Props) {
+  1153→  const { id } = await params; // ✅ await the Promise
+  1154→  const animeId = parseInt(id, 10);
+  1155→
+  1156→  if (isNaN(animeId)) {
+  1157→    notFound(); // ✅ Validate ID format
+  1158→  }
+  1159→
+  1160→  const anime = await fetchAnimeDetail(animeId);
+  1161→  if (!anime) {
+  1162→    notFound(); // ✅ 404 for missing anime
+  1163→  }
+  1164→
+  1165→  return (/* render anime detail page */);
+  1166→}
+  1167→```
+  1168→
+  1169→### Phase 3 Verification
+  1170→- [ ] Detail page renders with AniList data
+  1171→- [ ] `generateMetadata` works (check `<title>` in view source)
+  1172→- [ ] Invalid IDs show 404
+  1173→- [ ] Non-numeric IDs show 404
+  1174→- [ ] Characters, relations render
+  1175→- [ ] Build passes
+  1176→
+  1177→---
+  1178→
+  1179→## 10. Phase 4: Video Player + Watch Page
+  1180→
+  1181→### Key Pattern: Dynamic Import (SSR: false)
+  1182→
+  1183→```typescript
+  1184→// components/watch/VideoPlayer.tsx
+  1185→"use client";
+  1186→import dynamic from 'next/dynamic';
+  1187→
+  1188→// ✅ Bug #22 avoidance: Vidstack uses browser APIs — must disable SSR
+  1189→const Player = dynamic(
+  1190→  () => import('./VidstackPlayer').then(mod => mod.VidstackPlayer),
+  1191→  {
+  1192→    ssr: false, // ✅ Prevent SSR crash
+  1193→    loading: () => <div className="w-full aspect-video bg-zinc-900 animate-shimmer rounded-lg" />,
+  1194→  }
+  1195→);
+  1196→
+  1197→export function VideoPlayer(props: VideoPlayerProps) {
+  1198→  return <Player {...props} />;
+  1199→}
+  1200→```
+  1201→
+  1202→### YouTube Fallback (No-Backend Mode)
+  1203→
+  1204→```typescript
+  1205→// components/watch/PlayerFallback.tsx
+  1206→"use client";
+  1207→
+  1208→interface PlayerFallbackProps {
+  1209→  trailerId: string | null;
+  1210→  trailerSite: string | null;
+  1211→}
+  1212→
+  1213→export function PlayerFallback({ trailerId, trailerSite }: PlayerFallbackProps) {
+  1214→  if (!trailerId || trailerSite !== 'youtube') {
+  1215→    return (
+  1216→      <div className="w-full aspect-video bg-zinc-900 rounded-lg flex items-center justify-center">
+  1217→        <p className="text-muted-foreground">No trailer available</p>
+  1218→      </div>
+  1219→    );
+  1220→  }
+  1221→
+  1222→  return (
+  1223→    <div className="w-full aspect-video rounded-lg overflow-hidden">
+  1224→      {/* ✅ Bug #22: YouTube embed with proper sandbox + CSP attributes */}
+  1225→      <iframe
+  1226→        src={`https://www.youtube.com/embed/${trailerId}`}
+  1227→        title="Anime Trailer"
+  1228→        className="w-full h-full"
+  1229→        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  1230→        sandbox="allow-scripts allow-same-origin allow-presentation"
+  1231→        allowFullScreen
+  1232→        loading="lazy"
+  1233→      />
+  1234→    </div>
+  1235→  );
+  1236→}
+  1237→```
+  1238→
+  1239→### Phase 4 Verification
+  1240→- [ ] Player loads without backend (shows trailer/fallback)
+  1241→- [ ] `dynamic({ ssr: false })` prevents hydration error
+  1242→- [ ] YouTube iframe renders with sandbox
+  1243→- [ ] Watch history saves to localStorage
+  1244→- [ ] Continue Watching appears on home
+  1245→- [ ] Build passes
+  1246→
+  1247→---
+  1248→
+  1249→## 11. Phase 5: Search, Trending, History
+  1250→
+  1251→### Key Pattern: Debounce Hook
+  1252→
+  1253→```typescript
+  1254→// hooks/useDebounce.ts
+  1255→import { useState, useEffect } from 'react';
+  1256→
+  1257→export function useDebounce<T>(value: T, delay = 400): T {
+  1258→  const [debounced, setDebounced] = useState(value);
+  1259→  useEffect(() => {
+  1260→    const timer = setTimeout(() => setDebounced(value), delay);
+  1261→    return () => clearTimeout(timer); // ✅ Bug #19: Cleanup timeout
+  1262→  }, [value, delay]);
+  1263→  return debounced;
+  1264→}
+  1265→```
+  1266→
+  1267→### Phase 5 Verification
+  1268→- [ ] Search debounces (400ms)
+  1269→- [ ] Filters work: genre, year, status, sort
+  1270→- [ ] Trending paginates
+  1271→- [ ] History reads from localStorage (SSR-safe)
+  1272→- [ ] Build passes
+  1273→
+  1274→---
+  1275→
+  1276→## 12. Phase 6: Polish & Ship
+  1277→
+  1278→### `app/error.tsx` (MUST be Client Component)
+  1279→
+  1280→```typescript
+  1281→"use client"; // ✅ Bug #4: REQUIRED by Next.js
+  1282→
+  1283→import { useEffect } from 'react';
+  1284→import { Button } from '@/components/ui/button';
+  1285→
+  1286→export default function Error({
+  1287→  error,
+  1288→  reset,
+  1289→}: {
+  1290→  error: Error & { digest?: string };
+  1291→  reset: () => void;
+  1292→}) {
+  1293→  useEffect(() => {
+  1294→    console.error('[GlobalError]', error);
+  1295→  }, [error]);
+  1296→
+  1297→  return (
+  1298→    <div className="min-h-screen flex items-center justify-center">
+  1299→      <div className="text-center">
+  1300→        <h2 className="text-2xl font-bold">Something went wrong</h2>
+  1301→        <p className="text-muted-foreground mt-2">{error.message}</p>
+  1302→        <Button onClick={reset} className="mt-4">Try again</Button>
+  1303→      </div>
+  1304→    </div>
+  1305→  );
+  1306→}
+  1307→```
+  1308→
+  1309→### Phase 6 Verification
+  1310→- [ ] `npm run build` succeeds
+  1311→- [ ] `npx tsc --noEmit` — zero errors
+  1312→- [ ] Lighthouse ≥ 85/90/95/90
+  1313→- [ ] 404 page works
+  1314→- [ ] error.tsx works
+  1315→- [ ] Placeholder image renders for missing covers
+  1316→- [ ] Mobile responsive all pages
+  1317→- [ ] Dark mode all pages
+  1318→- [ ] No console errors
+  1319→
+  1320→---
+  1321→
+  1322→## 13. Complete Server / Client Directive Map
+  1323→
+  1324→> [!IMPORTANT]
+  1325→> This is the definitive reference. If a file needs `"use client"` and you forget it, the build WILL fail.
+  1326→
+  1327→| File | Directive | Why |
+  1328→|:---|:---|:---|
+  1329→| `app/layout.tsx` | Server ✅ | No hooks, wraps ThemeProvider |
+  1330→| `app/page.tsx` | `"use client"` | motion, useRouter |
+  1331→| `app/error.tsx` | `"use client"` | **Next.js requirement** |
+  1332→| `app/not-found.tsx` | Server ✅ | Static content |
+  1333→| `app/loading.tsx` | Server ✅ | Static skeleton, no motion |
+  1334→| `(app)/home/page.tsx` | Server (async) ✅ | Fetches data with await |
+  1335→| `(app)/anime/[id]/page.tsx` | Server (async) ✅ | await params + generateMetadata |
+  1336→| `(app)/watch/[id]/page.tsx` | `"use client"` | Player, localStorage |
+  1337→| `(app)/search/page.tsx` | `"use client"` | useState, useSearchParams |
+  1338→| `(app)/trending/page.tsx` | Server (async) ✅ | Fetches data |
+  1339→| `(app)/history/page.tsx` | `"use client"` | localStorage |
+  1340→| `LandingHero.tsx` | `"use client"` | motion, useEffect |
+  1341→| `Navbar.tsx` | `"use client"` | useState, useEffect (scroll) |
+  1342→| `Footer.tsx` | Server ✅ | Static links |
+  1343→| `AnimeCard.tsx` | `"use client"` | motion hover |
+  1344→| `AnimeCardSkeleton.tsx` | Server ✅ | CSS only |
+  1345→| `TrendingCarousel.tsx` | `"use client"` | Scroll state |
+  1346→| `PopularGrid.tsx` | Server ✅ | Static grid |
+  1347→| `ContinueWatching.tsx` | `"use client"` | localStorage |
+  1348→| `CategoryTabs.tsx` | `"use client"` | useState |
+  1349→| `EpisodeGrid.tsx` | `"use client"` | Selection state |
+  1350→| `VideoPlayer.tsx` | `"use client"` | dynamic import, ssr: false |
+  1351→| `EpisodePanel.tsx` | `"use client"` | Scroll, selection |
+  1352→| `PlayerFallback.tsx` | `"use client"` | YouTube iframe |
+  1353→| `SearchBar.tsx` | `"use client"` | Input state |
+  1354→| `FilterPanel.tsx` | `"use client"` | Filter state |
+  1355→| `ErrorBoundary.tsx` | `"use client"` | Class component |
+  1356→| `ErrorCard.tsx` | Server ✅ | Static UI |
+  1357→| `theme-provider.tsx` | `"use client"` | Context |
+  1358→
+  1359→---
+  1360→
+  1361→## 14. Common SSR Traps & Fixes
+  1362→
+  1363→| Trap | What Happens | Fix |
+  1364→|:---|:---|:---|
+  1365→| `localStorage` at top level | `ReferenceError: window is not defined` | Read in `useEffect` only, guard with `typeof window === 'undefined'` |
+  1366→| `document.querySelector` | Crashes during SSR | Only in `useEffect` |
+  1367→| `window.innerWidth` | Crashes during SSR | Use `useMediaQuery` hook (reads in `useEffect`) |
+  1368→| motion in Server Component | Build error | Add `"use client"` |
+  1369→| `useRouter` in Server Component | Build error | Add `"use client"`, use `next/navigation` |
+  1370→| `params.id` without await | Type error in Next.js 15 | `const { id } = await params` |
+  1371→| `next-themes` without `suppressHydrationWarning` | Console hydration warning on every page | Add to `<html>` tag |
+  1372→| `Image` without `remotePatterns` | Runtime error: unconfigured host | Add hostname to `next.config.ts` |
+  1373→| `Vidstack` on server | Crash (browser APIs) | `dynamic(() => import(...), { ssr: false })` |
+  1374→| `dangerouslySetInnerHTML` with AniList description | XSS risk | Use `sanitizeDescription()` |
+  1375→
+  1376→---
+  1377→
+  1378→## 15. Build Verification Gate (Every Phase)
+  1379→
+  1380→```bash
+  1381→# ALL THREE must pass before phase is complete
+  1382→npx tsc --noEmit     # Type safety
+  1383→npx next lint        # Code quality
+  1384→npm run build        # Production build (catches SSR errors)
+  1385→```
+  1386→
+  1387→### Quality Standards
+  1388→
+  1389→| Standard | Enforcement |
+  1390→|:---|:---|
+  1391→| Zero `any` types | `strict: true` in tsconfig |
+  1392→| All API data validated | Zod `safeParse()` every response |
+  1393→| Null-safe rendering | `getTitle()` helper, `??` fallbacks |
+  1394→| Error isolation | `ErrorBoundary` per section |
+  1395→| Graceful API failure | `null` return → empty state UI |
+  1396→| Bounded retries | `MAX_RETRIES = 1`, no infinite recursion |
+  1397→| Request timeouts | `AbortController` with 10s timeout |
+  1398→| SSR-safe hooks | `typeof window` guards, `useEffect` reads |
+  1399→| Memory leak prevention | `useEffect` cleanup for listeners/timers |
+  1400→| HTML sanitization | `sanitizeDescription()` for AniList HTML |
+  1401→| Correct directives | Directive map (§13) verified each phase |
+  1402→| Correct imports | `motion/react`, `next/navigation` |
+  1403→| Hydration safety | `suppressHydrationWarning`, `isLoaded` flags |
+  1404→| Image security | `remotePatterns` (not `domains`) |
+  1405→| Suspense boundaries | Every async Server Component wrapped |
+  1406→
+  1407→### Lighthouse Targets
+  1408→
+  1409→| Metric | Phase 1 | Phase 2+ | Phase 6 |
+  1410→|:---|:---|:---|:---|
+  1411→| Performance | ≥ 95 | ≥ 85 | ≥ 85 |
+  1412→| Accessibility | ≥ 90 | ≥ 85 | ≥ 90 |
+  1413→| Best Practices | ≥ 95 | ≥ 90 | ≥ 95 |
+  1414→| SEO | ≥ 90 | ≥ 85 | ≥ 90 |
+  1415→
+  1416→---
+  1417→
+  1418→## 16. Bug Audit Log (24 Issues Found & Fixed)
+  1419→
+  1420→### 🔴 CRITICAL (3) — Would crash the app or fail the build
+  1421→
+  1422→| # | Bug | Fix |
+  1423→|:---|:---|:---|
+  1424→| **1** | Package `framer-motion` renamed to `motion`; import path changed to `"motion/react"` | Updated package name + import path everywhere |
+  1425→| **2** | TailwindCSS v4 has **no** `tailwind.config.ts` — uses CSS `@theme` directive | Removed config file, added full `@theme` in globals.css |
+  1426→| **3** | API retry had **no counter** → infinite recursion → stack overflow | Added `_retryCount` param, `MAX_RETRIES = 1` |
+  1427→
+  1428→### 🟠 MAJOR (10) — Would cause runtime errors or hydration failures
+  1429→
+  1430→| # | Bug | Fix |
+  1431→|:---|:---|:---|
+  1432→| **4** | `error.tsx` missing `"use client"` (Next.js requirement) | Added directive |
+  1433→| **5** | Landing `page.tsx` missing `"use client"` (uses hooks + motion) | Added directive |
+  1434→| **6** | Vidstack pinned to `1.12.x` (React 19 compat issues) | Updated to `1.15.x` |
+  1435→| **7** | No Server/Client annotations on any component | Added directive map for all 30+ files |
+  1436→| **8** | Mermaid diagram had cross-subgraph edges (invalid syntax) | Refactored to flat nodes |
+  1437→| **14** | `<html>` missing `suppressHydrationWarning` → hydration mismatch | Added to layout.tsx |
+  1438→| **15** | `images.domains` deprecated in Next.js 15 | Changed to `images.remotePatterns` |
+  1439→| **16** | `localStorage` accessed during SSR → `window is not defined` crash | Added `typeof window` guard + `useEffect` init |
+  1440→| **17** | Next.js 15 `params` are `Promise` → must `await params` | Added `await params` pattern in [id] routes |
+  1441→| **21** | Missing `Suspense` boundaries around async Server Components | Wrapped every async section |
+  1442→
+  1443→### 🟡 MINOR (11) — Would cause subtle bugs or degraded UX
+  1444→
+  1445→| # | Bug | Fix |
+  1446→|:---|:---|:---|
+  1447→| **9** | Outfit font in design but not in tech stack | Added to font list |
+  1448→| **10** | Missing `contentEditable` check in keyboard handler | Added check |
+  1449→| **11** | Wrong animation plugin (`tailwindcss-animate` → `tw-animate-css`) | Fixed package name |
+  1450→| **12** | `components.json` missing `"config": ""` for TW4 | Added complete config |
+  1451→| **13** | `placeholder-card.png` referenced but not in `public/` | Added to project structure |
+  1452→| **18** | No `AbortController` for fetch requests → no timeout → zombie requests | Added 10s timeout with abort |
+  1453→| **19** | Missing `useEffect` cleanup for event listeners → memory leaks | Added `return () => removeEventListener(...)` everywhere |
+  1454→| **20** | AniList description contains HTML → XSS risk if rendered raw | Added `sanitizeDescription()` helper |
+  1455→| **22** | YouTube embed missing `sandbox` attribute → security risk | Added `sandbox="allow-scripts allow-same-origin allow-presentation"` |
+  1456→| **23** | Missing placeholder image in `public/` for fallback covers | Added to structure + noted in build steps |
+  1457→| **24** | Project init command was unspecified → unclear how to start | Added exact `npx create-next-app@latest ./xan --yes` command |
+  1458→
