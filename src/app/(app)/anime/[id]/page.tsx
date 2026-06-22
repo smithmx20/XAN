@@ -14,6 +14,7 @@ import { AnimeInfo } from "@/components/anime/AnimeInfo";
 import { EpisodeGrid } from "@/components/anime/EpisodeGrid";
 import { CharacterList } from "@/components/anime/CharacterList";
 import { RelatedAnime } from "@/components/anime/RelatedAnime";
+import { AllAnimeCrossReference } from "@/components/allanime/AllAnimeCrossReference";
 import { ErrorCard } from "@/components/ErrorCard";
 
 export const revalidate = 3600; // 1 hour — detail page
@@ -84,6 +85,10 @@ export default async function AnimeDetailPage({ params }: Props) {
             <EpisodeGrid animeId={anime.id} episodeCount={anime.episodes} />
           </div>
           <div className="space-y-8">
+            <AllAnimeCrossReference
+              anilistId={anime.id}
+              anilistTitle={getTitle(anime.title)}
+            />
             <CharacterList characters={characters} />
           </div>
         </div>

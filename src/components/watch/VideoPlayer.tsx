@@ -48,7 +48,9 @@ export function VideoPlayer({
     setError(null);
     setStream(null);
 
-    fetch(`/api/stream/${animeId}/${episode}`)
+    // Pass anime title to the stream proxy so it can search AllAnime
+    const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
+    fetch(`/api/stream/${animeId}/${episode}?${titleParam}`)
       .then(async (res) => {
         if (!res.ok) {
           // Backend returned an error — most likely missing NEXT_PUBLIC_BACKEND_URL

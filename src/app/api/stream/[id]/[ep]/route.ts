@@ -1,28 +1,25 @@
 // app/api/stream/[id]/[ep]/route.ts
 // Server-side stream proxy.
 //
-// Flow:
-//   1. Try Consumet (animepahe provider) — real anime streams
-//   2. If Consumet is unreachable or returns no sources → fall back to mock HLS
-//   3. If CONSUMET_URL is not set → use mock HLS directly
+// Flow (tries each in order):
+//   1. AllAnime GraphQL → find show by AniList ID → fetch stream sources
+//      (Usually fails — AllAnime's /episodes endpoint is Cloudflare-protected)
+//   2. Consumet (if CONSUMET_URL set) → animepahe two-step flow
+//   3. Mock HLS fallback (public test streams)
 //
-// Consumet contract (lib/consumet.ts):
-//   GET {CONSUMET_URL}/anime/animepahe/info/{anilistId}        → episode list
-//   GET {CONSUMET_URL}/anime/animepahe/watch?episodeId={id}    → stream sources
-//
-// NOTE: The public api.consumet.org is DEAD (HTTP 451). Self-host:
-//   https://github.com/consumet/api.consumet.org
-//   Then set CONSUMET_URL="https://your-instance.com" in .env.local
+// Whatever returns a valid stream URL first wins; the rest are skipped.
 
 import { NextResponse } from "next/server";
+import {
+  findShowByAniListId,
+  fetchAllAnimeStreamSources,
+} from "@/lib/allanime";
 import { fetchConsumetStream, getConsumetConfig } from "@/lib/consumet";
 
 export const dynamic = "force-dynamic";
-// Consumet can be slow — allow up to 30s
 export const maxDuration = 30;
 
-// ─── Mock HLS streams (used when Consumet is unavailable) ───
-// Public test streams — verified working, CORS-enabled.
+// ─── Mock HLS streams (final fallback) ───
 const MOCK_STREAMS: { url: string; quality: string }[] = [
   {
     url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
@@ -65,9 +62,49 @@ export async function GET(
     );
   }
 
-  const cfg = getConsumetConfig();
+  // ─── 1. Try AllAnime ───
+  // We need the AniList anime title to search AllAnime. The stream proxy doesn't
+  // have it directly, so we accept it as a query parameter from the watch page.
+  const url = new URL(_request.url);
+  const title = url.searchParams.get("title") || "";
 
-  // ─── Try Consumet first ───
+  if (title) {
+    try {
+      const show = await findShowByAniListId(animeId, title);
+      if (show) {
+        const sources = await fetchAllAnimeStreamSources(
+          show._id,
+          String(episode),
+        );
+        if (sources && sources.length > 0) {
+          const picked = sources[0];
+          if (picked && picked.url) {
+            return NextResponse.json({
+              stream: {
+                url: picked.url,
+                type: picked.url.includes(".m3u8") ? "hls" : "mp4",
+                quality: picked.quality,
+              },
+              sources: sources.map((s) => ({
+                url: s.url,
+                type: s.url.includes(".m3u8") ? ("hls" as const) : ("mp4" as const),
+                quality: s.quality,
+              })),
+              duration: null,
+              episodeTitle: `Episode ${episode}`,
+              thumbnail: null,
+              provider: "allanime",
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[stream] AllAnime attempt failed:", err);
+    }
+  }
+
+  // ─── 2. Try Consumet ───
+  const cfg = getConsumetConfig();
   if (cfg.configured) {
     const stream = await fetchConsumetStream(animeId, episode);
     if (stream) {
@@ -77,36 +114,22 @@ export async function GET(
           type: stream.type,
           quality: stream.quality,
         },
-        sources: [
-          {
-            url: stream.url,
-            type: stream.type,
-            quality: stream.quality,
-          },
-        ],
+        sources: [{ ...stream }],
         duration: null,
         episodeTitle: `Episode ${episode}`,
         thumbnail: null,
         provider: "consumet/animepahe",
       });
     }
-
-    // Consumet failed — fall through to mock with reason
-    return NextResponse.json(
-      mockResponse(
-        animeId,
-        episode,
-        "Consumet API unreachable or returned no sources. Showing demo stream.",
-      ),
-    );
   }
 
-  // ─── Consumet not configured → use mock ───
+  // ─── 3. Fallback to mock ───
+  const reasons: string[] = [];
+  if (title) reasons.push("AllAnime stream endpoint is Cloudflare-protected");
+  if (!cfg.configured) reasons.push("CONSUMET_URL not set");
+  else reasons.push("Consumet returned no sources");
+
   return NextResponse.json(
-    mockResponse(
-      animeId,
-      episode,
-      "CONSUMET_URL not set. Showing demo stream. Set CONSUMET_URL to enable real episode streaming.",
-    ),
+    mockResponse(animeId, episode, reasons.join("; ") + ". Showing demo stream."),
   );
 }
