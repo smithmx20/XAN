@@ -15,6 +15,12 @@ const nextConfig: NextConfig = {
         hostname: "img.youtube.com",
         pathname: "/vi/**",
       },
+      // ✅ Jikan / MyAnimeList CDN
+      {
+        protocol: "https",
+        hostname: "cdn.myanimelist.net",
+        pathname: "/images/**",
+      },
     ],
   },
   typescript: {
