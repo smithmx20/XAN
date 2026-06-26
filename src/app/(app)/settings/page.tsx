@@ -1,30 +1,52 @@
 "use client";
 
 // app/(app)/settings/page.tsx
-// ✅ Settings page — manual Cloudflare verification for AllAnime streams.
-// Includes:
-//   - Server-side cookie storage + test
-//   - Client-side test (browser fetches AllAnime directly)
-//   - Detailed diagnostics (IP mismatch detection, UA check, etc.)
+// ✅ Completely redesigned settings page — no cf_clearance UI.
+// ✅ Six sections: Appearance, Playback, Audio & Subtitles,
+//    Content & Discovery, Data & Privacy, About.
+// ✅ Persists via useSettings hook (localStorage "xan-settings").
+// ✅ Theme switching wired through next-themes.
+// ✅ Clear / Export watch history wired through useWatchHistory.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useTheme } from "next-themes";
 import {
+  Palette,
+  Play,
+  Languages,
   ShieldCheck,
-  ShieldAlert,
-  ExternalLink,
-  Copy,
-  Check,
-  Loader2,
-  Trash2,
-  RefreshCw,
+  Database,
   Info,
-  Terminal,
-  Network,
+  Moon,
+  Sun,
+  Monitor,
+  Gauge,
+  Volume2,
+  SkipForward,
+  SkipBack,
+  EyeOff,
+  Sparkles,
+  Trash2,
+  Download,
+  RotateCcw,
+  Heart,
+  Github,
+  ExternalLink,
+  Check,
   AlertTriangle,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Card,
   CardContent,
@@ -32,450 +54,695 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { useSettings, DEFAULT_SETTINGS, type Settings } from "@/hooks/useSettings";
+import { useWatchHistory } from "@/hooks/useWatchHistory";
 
-interface CookieStatus {
-  hasCookie: boolean;
-  isExpired: boolean;
-  ageMinutes: number | null;
-}
+// ─── Section definitions (for nav chips + rendering) ───────────────────────
 
-interface TestResult {
-  status: number;
-  ok: boolean;
-  bodySnippet: string;
-  hasCookie: boolean;
-  diagnostics?: {
-    serverIp: string | null;
-    savedFromIp: string | null;
-    ipMismatch: boolean;
-    userAgent: string | null;
-    cookieLength: number;
-    hasCfClearance: boolean;
-    responseServer: string | null;
-    cfMitigated: string | null;
-  };
-}
+type SectionId =
+  | "appearance"
+  | "playback"
+  | "audio"
+  | "content"
+  | "data"
+  | "about";
 
-interface ClientTestResult {
-  ok: boolean;
-  status: number;
-  error: string | null;
-  bodySnippet: string;
-}
+const SECTIONS: { id: SectionId; label: string; icon: typeof Palette }[] = [
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "playback", label: "Playback", icon: Play },
+  { id: "audio", label: "Audio & Subtitles", icon: Languages },
+  { id: "content", label: "Content & Discovery", icon: ShieldCheck },
+  { id: "data", label: "Data & Privacy", icon: Database },
+  { id: "about", label: "About", icon: Info },
+];
+
+const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const SORT_OPTIONS: { value: Settings["defaultSort"]; label: string }[] = [
+  { value: "trending", label: "Trending now" },
+  { value: "popular", label: "All-time popular" },
+  { value: "score", label: "Highest score" },
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+];
+
+// ─── Page ───────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [status, setStatus] = useState<CookieStatus | null>(null);
-  const [cookieValue, setCookieValue] = useState("");
-  // Bug 16 fix: initialize to empty string (not navigator.userAgent) to avoid
-  // hydration mismatch — UA is set inside useEffect (client-only)
-  const [userAgent, setUserAgent] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [clientTesting, setClientTesting] = useState(false);
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [clientTestResult, setClientTestResult] = useState<ClientTestResult | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { settings, update, reset, isLoaded } = useSettings();
+  const { theme, setTheme } = useTheme();
+  const { history, clearHistory } = useWatchHistory();
+  const [activeSection, setActiveSection] = useState<SectionId>("appearance");
+  const [exported, setExported] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
 
-  const refreshStatus = useCallback(async () => {
+  // Scroll spy: highlight nav chip for the section currently in view
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible) {
+          setActiveSection(visible.target.id as SectionId);
+        }
+      },
+      { rootMargin: "-20% 0px -60% 0px", threshold: [0, 0.25, 0.5, 1] },
+    );
+    SECTIONS.forEach(({ id }) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [isLoaded]);
+
+  const handleExport = useCallback(() => {
     try {
-      const res = await fetch("/api/cf/status");
-      if (res.ok) {
-        const json = await res.json();
-        setStatus(json);
-      }
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: 1,
+        history,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `xan-history-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExported(true);
+      setTimeout(() => setExported(false), 2000);
     } catch {
       // ignore
     }
-  }, []);
+  }, [history]);
 
-  useEffect(() => {
-    refreshStatus();
-    setUserAgent(typeof navigator !== "undefined" ? navigator.userAgent : "");
-  }, [refreshStatus]);
+  const historyCount = useMemo(() => history.length, [history]);
 
-  const handleSave = async () => {
-    if (!cookieValue.trim()) {
-      setError("Please paste the cf_clearance cookie value");
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-    setTestResult(null);
-    setClientTestResult(null);
-
-    try {
-      const res = await fetch("/api/cf/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          value: cookieValue.trim(),
-          userAgent: userAgent || navigator.userAgent,
-        }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json?.error || `HTTP ${res.status}`);
-      }
-
-      await handleTest();
-      await refreshStatus();
-      setCookieValue("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/cf/test", { method: "POST" });
-      const json = await res.json();
-      setTestResult(json);
-      await refreshStatus();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Test failed");
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleClientTest = async () => {
-    setClientTesting(true);
-    setError(null);
-    try {
-      // The browser fetches AllAnime directly — uses the browser's own cf_clearance cookie
-      const targetUrl = "https://api.allanime.day/episodes?id=PGcK4wGnqDoeihT6n&episode=1&type=sub";
-      const res = await fetch(targetUrl, {
-        credentials: "include",
-        headers: { Accept: "application/json" },
-      });
-      const body = await res.text();
-      const isCfChallenge = body.includes("Just a moment") || res.status === 403;
-      setClientTestResult({
-        ok: res.ok && !isCfChallenge,
-        status: res.status,
-        error: isCfChallenge ? "Cloudflare challenge page returned" : null,
-        bodySnippet: body.substring(0, 300),
-      });
-    } catch (err) {
-      setClientTestResult({
-        ok: false,
-        status: 0,
-        error: err instanceof Error ? err.message : "CORS or network error",
-        bodySnippet: "",
-      });
-    } finally {
-      setClientTesting(false);
-    }
-  };
-
-  const handleClear = async () => {
-    setSaving(true);
-    try {
-      await fetch("/api/cf/clear", { method: "POST" });
-      setTestResult(null);
-      setClientTestResult(null);
-      setCookieValue("");
-      await refreshStatus();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const copyConsoleCommand = () => {
-    const cmd = `document.cookie.split(';').find(c => c.includes('cf_clearance')).split('=')[1]`;
-    navigator.clipboard.writeText(cmd);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const ipMismatch = testResult?.diagnostics?.ipMismatch;
-  const serverVerified = status?.hasCookie && !status.isExpired && testResult?.ok;
-  const clientVerified = clientTestResult?.ok;
+  // Don't render interactive controls until hydrated — prevents flash of wrong values
+  if (!isLoaded) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 md:px-6 py-8 space-y-6">
+        <div className="h-24 rounded-xl bg-xan-card/30 animate-pulse" />
+        <div className="h-10 rounded-lg bg-xan-card/30 animate-pulse" />
+        <div className="h-64 rounded-xl bg-xan-card/30 animate-pulse" />
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 md:px-6 py-8 space-y-6">
-      {/* Header */}
-      <div className="space-y-1">
-        <h1 className="text-2xl md:text-3xl font-display font-bold text-foreground flex items-center gap-2">
-          <ShieldCheck className="h-7 w-7 text-xan-crimson" />
-          Settings
+    <div className="max-w-4xl mx-auto px-4 md:px-6 py-8 space-y-6">
+      {/* ─── Header ─── */}
+      <div className="space-y-2">
+        <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground flex items-center gap-3">
+          <span className="bg-gradient-to-r from-xan-crimson to-xan-violet bg-clip-text text-transparent">
+            Settings
+          </span>
         </h1>
         <p className="text-sm text-muted-foreground">
-          Configure AllAnime stream verification to enable real episode
-          playback.
+          Personalize your XAN streaming experience. Changes are saved
+          automatically to your browser.
         </p>
       </div>
 
-      {/* IP Mismatch Warning */}
-      {ipMismatch && (
-        <Card className="border-amber-500/30 bg-amber-500/5">
-          <CardContent className="pt-6">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
-              <div className="space-y-1 text-sm">
-                <p className="font-semibold text-amber-400">
-                  IP Address Mismatch Detected
-                </p>
-                <p className="text-muted-foreground">
-                  Your browser&apos;s IP (<code className="text-foreground font-mono">{testResult?.diagnostics?.savedFromIp}</code>) differs from the server&apos;s IP (<code className="text-foreground font-mono">{testResult?.diagnostics?.serverIp}</code>).
-                </p>
-                <p className="text-muted-foreground">
-                  Cloudflare&apos;s <code className="text-foreground">cf_clearance</code> cookie is IP-bound. The server cannot use your browser&apos;s cookie.{" "}
-                  <strong className="text-foreground">Use the Client-Side Test below</strong> — it fetches directly from your browser, bypassing the server.
-                </p>
+      {/* ─── Section nav chips (sticky) ─── */}
+      <nav className="sticky top-16 z-20 -mx-4 px-4 py-2 bg-background/80 backdrop-blur-md border-b border-xan-border">
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+          {SECTIONS.map(({ id, label, icon: Icon }) => {
+            const active = activeSection === id;
+            return (
+              <a
+                key={id}
+                href={`#${id}`}
+                onClick={() => setActiveSection(id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+                  active
+                    ? "bg-gradient-to-r from-xan-crimson to-xan-violet text-white shadow-lg shadow-xan-crimson/20"
+                    : "bg-xan-card/60 text-muted-foreground hover:text-foreground hover:bg-xan-card-hover border border-xan-border"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </a>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* ─── Appearance ─── */}
+      <section id="appearance" className="scroll-mt-32">
+        <SectionHeader
+          icon={Palette}
+          title="Appearance"
+          description="Customize how XAN looks on your device."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm">
+          <CardContent className="p-6 space-y-6">
+            <SettingRow
+              icon={theme === "dark" ? Moon : theme === "light" ? Sun : Monitor}
+              title="Theme"
+              description="Choose between dark, light, or follow your system preference."
+            >
+              <div className="flex gap-1.5 bg-xan-card/60 p-1 rounded-lg border border-xan-border">
+                {(
+                  [
+                    { value: "dark", icon: Moon, label: "Dark" },
+                    { value: "light", icon: Sun, label: "Light" },
+                    { value: "system", icon: Monitor, label: "Auto" },
+                  ] as const
+                ).map(({ value, icon: Icon, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => {
+                      setTheme(value);
+                      update("theme", value);
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      theme === value
+                        ? "bg-gradient-to-r from-xan-crimson to-xan-violet text-white shadow"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ─── Playback ─── */}
+      <section id="playback" className="scroll-mt-32">
+        <SectionHeader
+          icon={Play}
+          title="Playback"
+          description="Control how episodes play by default."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm">
+          <CardContent className="p-6 space-y-6 divide-y divide-xan-border/60">
+            <SettingRow
+              icon={SkipForward}
+              title="Autoplay next episode"
+              description="Automatically queue and play the next episode when the current one ends."
+            >
+              <Switch
+                checked={settings.autoplayNext}
+                onCheckedChange={(v) => update("autoplayNext", v)}
+              />
+            </SettingRow>
+
+            <SettingRow
+              icon={RotateCcw}
+              title="Auto-resume from last position"
+              description="When revisiting an episode, jump to where you left off."
+            >
+              <Switch
+                checked={settings.autoResume}
+                onCheckedChange={(v) => update("autoResume", v)}
+              />
+            </SettingRow>
+
+            <SettingRow
+              icon={Gauge}
+              title="Default playback speed"
+              description="Start every episode at this speed. You can still adjust during playback."
+            >
+              <Select
+                value={String(settings.defaultPlaybackSpeed)}
+                onValueChange={(v) => update("defaultPlaybackSpeed", parseFloat(v))}
+              >
+                <SelectTrigger className="w-28 bg-xan-card border-xan-border">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PLAYBACK_SPEEDS.map((s) => (
+                    <SelectItem key={s} value={String(s)}>
+                      {s === 1 ? "1× (Normal)" : `${s}×`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingRow>
+
+            <div className="pt-6 space-y-3">
+              <SettingRow
+                icon={Volume2}
+                title="Default volume"
+                description="Start every episode at this volume level."
+                stacked
+              >
+                <div className="flex items-center gap-3 w-full">
+                  <Slider
+                    value={[settings.defaultVolume]}
+                    onValueChange={(v) => update("defaultVolume", v[0] ?? 100)}
+                    min={0}
+                    max={100}
+                    step={5}
+                    className="flex-1"
+                  />
+                  <span className="text-xs font-mono text-muted-foreground w-12 text-right">
+                    {settings.defaultVolume}%
+                  </span>
+                </div>
+              </SettingRow>
+            </div>
+
+            <SettingRow
+              icon={SkipBack}
+              title="Auto-skip intro"
+              description="Skip the opening theme (first ~85 seconds) automatically."
+            >
+              <Switch
+                checked={settings.skipIntro}
+                onCheckedChange={(v) => update("skipIntro", v)}
+              />
+            </SettingRow>
+
+            <SettingRow
+              icon={SkipForward}
+              title="Auto-skip outro"
+              description="Skip the ending theme automatically when it starts."
+            >
+              <Switch
+                checked={settings.skipOutro}
+                onCheckedChange={(v) => update("skipOutro", v)}
+              />
+            </SettingRow>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ─── Audio & Subtitles ─── */}
+      <section id="audio" className="scroll-mt-32">
+        <SectionHeader
+          icon={Languages}
+          title="Audio & Subtitles"
+          description="Pick your preferred audio track by default."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm">
+          <CardContent className="p-6 space-y-6">
+            <SettingRow
+              icon={Languages}
+              title="Default audio mode"
+              description="Choose SUB (Japanese audio + English subtitles) or DUB (English dubbed audio). You can still switch during playback."
+            >
+              <div className="flex gap-1.5 bg-xan-card/60 p-1 rounded-lg border border-xan-border">
+                {(["sub", "dub"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => update("defaultAudioMode", mode)}
+                    className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${
+                      settings.defaultAudioMode === mode
+                        ? "bg-gradient-to-r from-xan-crimson to-xan-violet text-white shadow"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {mode === "sub" ? "SUB" : "DUB"}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ─── Content & Discovery ─── */}
+      <section id="content" className="scroll-mt-32">
+        <SectionHeader
+          icon={ShieldCheck}
+          title="Content & Discovery"
+          description="Filter what shows up while browsing."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm">
+          <CardContent className="p-6 space-y-6 divide-y divide-xan-border/60">
+            <SettingRow
+              icon={EyeOff}
+              title="Hide adult content"
+              description="Filter out Ecchi, Erotica, and Hentai titles from search, browse, and recommendations."
+            >
+              <Switch
+                checked={settings.hideAdult}
+                onCheckedChange={(v) => update("hideAdult", v)}
+              />
+            </SettingRow>
+
+            <SettingRow
+              icon={Sparkles}
+              title="Hide spoilers in descriptions"
+              description="Blur spoiler-sensitive text in anime synopses until you hover over them."
+            >
+              <Switch
+                checked={settings.hideSpoilers}
+                onCheckedChange={(v) => update("hideSpoilers", v)}
+              />
+            </SettingRow>
+
+            <SettingRow
+              icon={ChevronRight}
+              title="Default sort order"
+              description="Default sort for trending, popular, and browse pages."
+            >
+              <Select
+                value={settings.defaultSort}
+                onValueChange={(v) =>
+                  update("defaultSort", v as Settings["defaultSort"])
+                }
+              >
+                <SelectTrigger className="w-44 bg-xan-card border-xan-border">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SORT_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingRow>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ─── Data & Privacy ─── */}
+      <section id="data" className="scroll-mt-32">
+        <SectionHeader
+          icon={Database}
+          title="Data & Privacy"
+          description="Manage what XAN stores on your device."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm">
+          <CardContent className="p-6 space-y-6 divide-y divide-xan-border/60">
+            <SettingRow
+              icon={Database}
+              title="Save watch history"
+              description="Track episodes you've watched locally for 'Continue Watching' and progress bars. Disabling this stops new entries from being saved."
+            >
+              <Switch
+                checked={settings.saveHistory}
+                onCheckedChange={(v) => update("saveHistory", v)}
+              />
+            </SettingRow>
+
+            <div className="pt-6 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium text-foreground flex items-center gap-2">
+                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    Clear watch history
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Permanently delete all {historyCount}{" "}
+                    {historyCount === 1 ? "entry" : "entries"} from your watch
+                    history. This cannot be undone.
+                  </p>
+                </div>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={historyCount === 0}
+                      className="bg-xan-card border-xan-border hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 flex-shrink-0"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                      Clear
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent className="bg-xan-card border-xan-border">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="flex items-center gap-2">
+                        <AlertTriangle className="h-5 w-5 text-amber-500" />
+                        Clear all watch history?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will permanently delete all {historyCount}{" "}
+                        {historyCount === 1 ? "entry" : "entries"} including
+                        progress timestamps. This action cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="bg-xan-card border-xan-border">
+                        Cancel
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={clearHistory}
+                        className="bg-red-500 hover:bg-red-600 text-white border-0"
+                      >
+                        Yes, clear everything
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </div>
+
+            <div className="pt-6 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium text-foreground flex items-center gap-2">
+                    <Download className="h-4 w-4 text-muted-foreground" />
+                    Export watch history
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Download your watch history as a JSON file for backup or
+                    transfer.
+                  </p>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleExport}
+                  disabled={historyCount === 0}
+                  className="bg-xan-card border-xan-border hover:bg-xan-card-hover flex-shrink-0"
+                >
+                  {exported ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 mr-1.5 text-emerald-400" />
+                      Downloaded
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-3.5 w-3.5 mr-1.5" />
+                      Export
+                    </>
+                  )}
+                </Button>
               </div>
             </div>
           </CardContent>
         </Card>
-      )}
+      </section>
 
-      {/* Server-Side Status */}
-      <Card className="border-xan-border bg-xan-card/50">
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <Network className="h-5 w-5 text-muted-foreground" />
-              Server-Side Verification
-            </span>
-            {serverVerified ? (
-              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
-                <ShieldCheck className="h-3 w-3 mr-1" />
-                Verified
-              </Badge>
-            ) : (
-              <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
-                <ShieldAlert className="h-3 w-3 mr-1" />
-                Not Verified
-              </Badge>
-            )}
-          </CardTitle>
-          <CardDescription>
-            Server fetches AllAnime using the stored cookie. Works only if
-            server and browser share the same IP.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {status?.hasCookie && (
-            <div className="text-xs text-muted-foreground space-y-1">
-              <div>
-                Cookie age:{" "}
-                <span className="text-foreground font-mono">
-                  {status.ageMinutes != null ? `${status.ageMinutes} min` : "unknown"}
-                </span>
+      {/* ─── About ─── */}
+      <section id="about" className="scroll-mt-32">
+        <SectionHeader
+          icon={Info}
+          title="About"
+          description="Version info, source, and credits."
+        />
+        <Card className="border-xan-border bg-xan-card/40 backdrop-blur-sm overflow-hidden">
+          <div className="bg-gradient-to-br from-xan-crimson/10 via-transparent to-xan-violet/10 p-6 border-b border-xan-border">
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-xan-crimson to-xan-violet flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-xan-crimson/30">
+                X
               </div>
               <div>
-                Status:{" "}
-                <span className={status.isExpired ? "text-red-400" : "text-emerald-400"}>
-                  {status.isExpired ? "Expired" : "Active"}
-                </span>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-display font-bold text-foreground">
+                    XAN
+                  </h3>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-xan-card/60 border border-xan-border text-muted-foreground font-mono">
+                    v1.0.0
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Stream anime without the noise.
+                </p>
               </div>
             </div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleTest} disabled={testing || !status?.hasCookie} variant="secondary" size="sm" className="bg-xan-card border-xan-border hover:bg-xan-card-hover">
-              {testing ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1.5" />}
-              Test Server-Side
-            </Button>
-            {status?.hasCookie && (
-              <Button onClick={handleClear} disabled={saving} variant="secondary" size="sm" className="bg-xan-card border-xan-border hover:bg-xan-card-hover text-red-400">
-                <Trash2 className="h-4 w-4 mr-1.5" />
-                Clear
-              </Button>
-            )}
           </div>
 
-          {testResult && (
-            <div className={`rounded-lg border p-3 text-xs font-mono ${testResult.ok ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400" : "border-red-500/30 bg-red-500/5 text-red-400"}`}>
-              <div>
-                HTTP {testResult.status} — {testResult.ok ? "✅ Cookie works!" : "❌ Cookie invalid or expired"}
-              </div>
-              {testResult.diagnostics && (
-                <div className="mt-2 space-y-0.5 opacity-80">
-                  <div>Server IP: {testResult.diagnostics.serverIp ?? "unknown"}</div>
-                  <div>Saved from IP: {testResult.diagnostics.savedFromIp ?? "unknown"}</div>
-                  <div>IP mismatch: {testResult.diagnostics.ipMismatch ? "YES ⚠️" : "no"}</div>
-                  <div>Has cf_clearance: {testResult.diagnostics.hasCfClearance ? "yes" : "NO"}</div>
-                  <div>Cookie length: {testResult.diagnostics.cookieLength}</div>
-                  <div>CF mitigated: {testResult.diagnostics.cfMitigated ?? "no"}</div>
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          <CardContent className="p-6 space-y-4">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              XAN is a modern anime streaming web app built with Next.js 16,
+              TypeScript, Tailwind CSS v4, and shadcn/ui. Powered by AniList for
+              metadata and AllAnime for streams. All preferences are stored
+              locally in your browser — no account, no tracking, no servers
+              knowing what you watch.
+            </p>
 
-      {/* Client-Side Test */}
-      <Card className="border-xan-border bg-xan-card/50">
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <ExternalLink className="h-5 w-5 text-muted-foreground" />
-              Client-Side Test
-            </span>
-            {clientVerified !== undefined && (
-              <Badge className={clientVerified ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}>
-                {clientVerified ? "Works" : "Blocked"}
-              </Badge>
-            )}
-          </CardTitle>
-          <CardDescription>
-            Your browser fetches AllAnime directly, using its own cf_clearance
-            cookie. This bypasses the server&apos;s IP entirely.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            First, visit{" "}
-            <a href="https://allmanga.to/anime/PGcK4wGnqDoeihT6n" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline inline-flex items-center gap-0.5">
-              allmanga.to <ExternalLink className="h-3 w-3" />
-            </a>{" "}
-            in a new tab and wait for any Cloudflare challenge to resolve. Then come back and click the button below.
-          </p>
-          <Button onClick={handleClientTest} disabled={clientTesting} variant="secondary" className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 border-xan-border hover:from-blue-500/30 hover:to-purple-500/30">
-            {clientTesting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ExternalLink className="h-4 w-4 mr-2" />}
-            Test Client-Side Fetch
-          </Button>
-          {clientTestResult && (
-            <div className={`rounded-lg border p-3 text-xs font-mono ${clientTestResult.ok ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400" : "border-red-500/30 bg-red-500/5 text-red-400"}`}>
-              <div>
-                HTTP {clientTestResult.status} — {clientTestResult.ok ? "✅ Browser cookie works!" : "❌ " + (clientTestResult.error || "Failed")}
-              </div>
-              {!clientTestResult.ok && (
-                <div className="mt-2 opacity-80">
-                  {clientTestResult.status === 0
-                    ? "CORS blocked the request. The browser cannot fetch AllAnime directly due to cross-origin restrictions. Use the server-side approach instead."
-                    : clientTestResult.status === 403
-                      ? "Cloudflare challenge not solved. Visit allmanga.to first and wait for the challenge to resolve."
-                      : "Unexpected response."}
-                </div>
-              )}
-              {clientTestResult.bodySnippet && (
-                <div className="mt-1 opacity-60 break-all">
-                  {clientTestResult.bodySnippet.substring(0, 150)}
-                  {clientTestResult.bodySnippet.length > 150 ? "…" : ""}
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Instructions */}
-      <Card className="border-xan-border bg-xan-card/50">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Info className="h-4 w-4 text-xan-crimson" />
-            How to Get Your Cookie
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex gap-3">
-            <div className="w-6 h-6 rounded-full bg-xan-crimson/20 text-xan-crimson flex items-center justify-center text-xs font-bold flex-shrink-0">1</div>
-            <div className="flex-1 space-y-1">
-              <p className="text-sm text-foreground">Open AllAnime in a new tab</p>
-              <Button asChild size="sm" variant="secondary" className="mt-1 bg-xan-card border-xan-border hover:bg-xan-card-hover">
-                <a href="https://allmanga.to/anime/PGcK4wGnqDoeihT6n" target="_blank" rel="noreferrer">
-                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                  Open AllAnime
+            <div className="flex flex-wrap gap-2 pt-2">
+              <Button
+                asChild
+                variant="secondary"
+                size="sm"
+                className="bg-xan-card border-xan-border hover:bg-xan-card-hover"
+              >
+                <a
+                  href="https://github.com/sundeepyt2/XAN"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Github className="h-3.5 w-3.5 mr-1.5" />
+                  Source code
+                  <ExternalLink className="h-3 w-3 ml-1.5 text-muted-foreground" />
+                </a>
+              </Button>
+              <Button
+                asChild
+                variant="secondary"
+                size="sm"
+                className="bg-xan-card border-xan-border hover:bg-xan-card-hover"
+              >
+                <a
+                  href="https://anilist.co"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Heart className="h-3.5 w-3.5 mr-1.5 text-xan-crimson" />
+                  Powered by AniList
+                  <ExternalLink className="h-3 w-3 ml-1.5 text-muted-foreground" />
                 </a>
               </Button>
             </div>
-          </div>
-          <div className="flex gap-3">
-            <div className="w-6 h-6 rounded-full bg-xan-crimson/20 text-xan-crimson flex items-center justify-center text-xs font-bold flex-shrink-0">2</div>
-            <div className="flex-1 space-y-1">
-              <p className="text-sm text-foreground">Get the <code className="text-xan-crimson">cf_clearance</code> cookie</p>
-              <p className="text-xs text-muted-foreground">
-                In the AllAnime tab, press <kbd className="px-1.5 py-0.5 bg-xan-card rounded text-xs font-mono border border-xan-border">F12</kbd>, open Console, and run:
-              </p>
-              <div className="rounded-lg bg-black/50 border border-xan-border p-2 font-mono text-xs text-emerald-400 flex items-center justify-between gap-2 mt-1">
-                <code className="break-all text-[10px]">
-                  document.cookie.split(&apos;;&apos;).find(c =&gt; c.includes(&apos;cf_clearance&apos;))
-                </code>
-                <Button size="sm" variant="ghost" onClick={copyConsoleCommand} className="flex-shrink-0 text-muted-foreground hover:text-foreground h-7 w-7 p-0">
-                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                This prints the full cookie string. Copy the part after <code className="text-foreground">cf_clearance=</code>.
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <div className="w-6 h-6 rounded-full bg-xan-crimson/20 text-xan-crimson flex items-center justify-center text-xs font-bold flex-shrink-0">3</div>
-            <div className="flex-1">
-              <p className="text-sm text-foreground">Paste it below and save</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      {/* Cookie Input */}
-      <Card className="border-xan-border bg-xan-card/50">
-        <CardHeader>
-          <CardTitle className="text-lg">Paste Cookie</CardTitle>
-          <CardDescription>
-            Accepts the full cookie string (e.g. <code className="text-foreground">cf_clearance=abc123</code>) or just the value.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-xs text-muted-foreground font-medium">
-              cf_clearance value or full cookie string
-            </label>
-            <Input
-              type="text"
-              placeholder="cf_clearance=abc123... or just abc123..."
-              value={cookieValue}
-              onChange={(e) => setCookieValue(e.target.value)}
-              className="font-mono text-xs bg-xan-card border-xan-border"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-xs text-muted-foreground font-medium">
-              User-Agent (must match the browser that solved the challenge)
-            </label>
-            <div className="flex gap-2">
-              <Input
-                type="text"
-                value={userAgent}
-                onChange={(e) => setUserAgent(e.target.value)}
-                className="font-mono text-xs bg-xan-card border-xan-border"
-              />
-              <Button onClick={() => setUserAgent(navigator.userAgent)} variant="secondary" size="sm" className="bg-xan-card border-xan-border hover:bg-xan-card-hover flex-shrink-0">
-                <Terminal className="h-3.5 w-3.5 mr-1" />
-                Use mine
-              </Button>
+            <div className="pt-4 mt-2 border-t border-xan-border">
+              <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                <strong className="text-muted-foreground">Disclaimer:</strong>{" "}
+                XAN is for educational purposes only and does not host or stream
+                any content itself. All streaming is performed via third-party
+                APIs. Users are responsible for complying with their local laws
+                and the terms of service of any third-party APIs used.
+              </p>
             </div>
-          </div>
-          {error && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-400">
-              {error}
-            </div>
-          )}
-          <Button onClick={handleSave} disabled={saving || !cookieValue.trim()} className="w-full bg-gradient-to-r from-xan-crimson to-xan-violet hover:opacity-90 text-white border-0">
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Saving & Testing…
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="h-4 w-4 mr-2" />
-                Save & Test
-              </>
-            )}
-          </Button>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ─── Reset all settings ─── */}
+      <div className="pt-4 border-t border-xan-border">
+        <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-red-400 hover:bg-red-500/5"
+            >
+              <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+              Reset all settings to defaults
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent className="bg-xan-card border-xan-border">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                Reset all settings?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This will restore all settings to their default values. Your
+                watch history will not be affected.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="bg-xan-card border-xan-border">
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  reset();
+                  setTheme(DEFAULT_SETTINGS.theme);
+                }}
+                className="bg-xan-crimson hover:bg-xan-crimson/90 text-white border-0"
+              >
+                Yes, reset to defaults
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
+  );
+}
+
+// ─── Helper components ──────────────────────────────────────────────────────
+
+function SectionHeader({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof Palette;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 mb-4">
+      <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-xan-crimson/20 to-xan-violet/20 border border-xan-border flex items-center justify-center flex-shrink-0">
+        <Icon className="h-4 w-4 text-xan-crimson" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <h2 className="text-lg font-display font-semibold text-foreground">
+          {title}
+        </h2>
+        <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+function SettingRow({
+  icon: Icon,
+  title,
+  description,
+  children,
+  stacked = false,
+}: {
+  icon: typeof Palette;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+  stacked?: boolean;
+}) {
+  if (stacked) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <Label className="text-sm font-medium text-foreground">{title}</Label>
+        </div>
+        <p className="text-xs text-muted-foreground">{description}</p>
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="space-y-1 flex-1 min-w-0">
+        <Label className="text-sm font-medium text-foreground flex items-center gap-2">
+          <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          {title}
+        </Label>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <div className="flex-shrink-0">{children}</div>
     </div>
   );
 }
