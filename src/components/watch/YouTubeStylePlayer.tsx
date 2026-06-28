@@ -2,6 +2,13 @@
 
 // components/watch/YouTubeStylePlayer.tsx
 // ✅ YouTube-style custom video player for XAN
+// ✅ 3-tier smart bandwidth loader — minimizes Vercel egress:
+//       Tier 1 (Direct):         browser loads raw URL → 0 Vercel bytes
+//       Tier 2 (Manifest-proxy): server proxies ONLY the .m3u8 (~5KB),
+//                                segments load direct from CDN → ~0 Vercel bytes
+//       Tier 3 (Full-proxy):     server proxies everything (fallback for
+//                                Referer-enforced segments / MP4 with headers)
+//    Auto-fallback: tries Tier 1 → on error, Tier 2 → on error, Tier 3.
 //
 // Features (mirrors the YouTube web player UX):
 //   - Auto-hiding controls (3s idle when playing; reappear on mousemove/tap)
@@ -25,7 +32,7 @@
 //   - Resume from last position (autoResumeTime prop)
 //   - Episode-end detection at 90% (onEpisodeEnd)
 //   - Picture-in-Picture, fullscreen, mute, volume
-//   - SUB/DUB mode badge + source badge (read-only)
+//   - SUB/DUB mode badge + source badge + bandwidth-mode badge (read-only)
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Hls from "hls.js";
@@ -49,6 +56,8 @@ import {
   RotateCw,
   RotateCcw,
   Repeat,
+  Zap,
+  Shield,
 } from "lucide-react";
 import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
 
@@ -76,18 +85,69 @@ interface HlsLevelInfo {
   label: string;
 }
 
-function applyProxy(
-  url: string,
+/**
+ * Bandwidth loading tier.
+ *   "direct"          — browser loads the raw stream URL; 0 Vercel bytes
+ *   "manifest-proxy"  — server proxies ONLY the .m3u8 manifest (~5KB);
+ *                       segments load direct from CDN; ~0 Vercel bytes
+ *   "full-proxy"      — server proxies everything (fallback); uses Vercel BW
+ *
+ * The player tries tiers in order and auto-advances on load errors.
+ * For HLS:  direct → manifest-proxy → full-proxy
+ * For MP4:  direct → full-proxy  (MP4 has no manifest to split)
+ */
+type LoadMode = "direct" | "manifest-proxy" | "full-proxy";
+
+/**
+ * Compute the ordered list of (mode, effectiveUrl) candidates to try.
+ * The first one that loads successfully wins; the rest are fallbacks.
+ */
+function buildLoadCandidates(
+  streamUrl: string,
+  streamType: "hls" | "mp4" | "dash",
   headers?: Record<string, string>,
-): { url: string; proxied: boolean } {
-  if (!headers || Object.keys(headers).length === 0) {
-    return { url, proxied: false };
+): Array<{ mode: LoadMode; url: string }> {
+  const hasHeaders = headers && Object.keys(headers).length > 0;
+
+  // No headers → browser can load directly, no proxy needed at all.
+  if (!hasHeaders) {
+    return [{ mode: "direct", url: streamUrl }];
   }
-  const params = new URLSearchParams({ url });
-  for (const [k, v] of Object.entries(headers)) {
-    params.set(`h_${k}`, v);
+
+  // Build the query-string-encoded header params once
+  const headerParams = new URLSearchParams();
+  for (const [k, v] of Object.entries(headers!)) {
+    headerParams.set(`h_${k}`, v);
   }
-  return { url: `/api/proxy_stream?${params.toString()}`, proxied: true };
+  const headerParamStr = headerParams.toString();
+
+  if (streamType === "hls") {
+    // HLS gets the full 3-tier cascade:
+    //   1. Direct (will fail if Referer enforced, but costs 0 bytes to try)
+    //   2. Manifest-proxy (server fetches tiny .m3u8 with headers, rewrites
+    //      segment URLs to absolute; segments then load direct from CDN)
+    //   3. Full-proxy (fallback — proxies all segments through Vercel)
+    return [
+      { mode: "direct", url: streamUrl },
+      {
+        mode: "manifest-proxy",
+        url: `/api/manifest-proxy?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
+      },
+      {
+        mode: "full-proxy",
+        url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
+      },
+    ];
+  }
+
+  // MP4 / DASH — no manifest to split, so only direct + full-proxy
+  return [
+    { mode: "direct", url: streamUrl },
+    {
+      mode: "full-proxy",
+      url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
+    },
+  ];
 }
 
 function formatTime(s: number): string {
@@ -160,6 +220,12 @@ export function YouTubeStylePlayer({
   const [hlsLevels, setHlsLevels] = useState<HlsLevelInfo[]>([]);
   const [currentLevel, setCurrentLevel] = useState<number>(-1); // -1 = Auto (ABR)
 
+  // ✅ Bandwidth load mode — tracks which tier is currently active.
+  // Visible in the UI as a "Direct" (green) or "Proxied" (amber) badge.
+  const [loadMode, setLoadMode] = useState<LoadMode>("direct");
+  // Tier index for the current load attempt (advances on failure)
+  const tierIdxRef = useRef(0);
+
   // Keep ref callbacks in sync without re-running the stream-loading effect
   useEffect(() => {
     onEpisodeEndRef.current = onEpisodeEnd;
@@ -168,26 +234,130 @@ export function YouTubeStylePlayer({
   });
 
   // ──────────────────────────────────────────────────────────────
-  // Stream loader (HLS / MP4)
+  // Stream loader — 3-tier smart loader (direct → manifest-proxy → full-proxy)
   // ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
+    // Build the candidate list for this stream (captured in closure)
+    const candidates = buildLoadCandidates(streamUrl, streamType, streamHeaders);
+    tierIdxRef.current = 0;
 
     setLoading(true);
     setError(null);
     endFiredRef.current = false;
     setHlsLevels([]);
     setCurrentLevel(-1);
+    setLoadMode(candidates[0]?.mode ?? "direct");
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
 
-    const { url: effectiveUrl } = applyProxy(streamUrl, streamHeaders);
     let cancelled = false;
 
+    // ── Helper: try to load a specific tier's URL ──
+    const tryLoadTier = (tierIdx: number) => {
+      if (cancelled) return;
+      const candidate = candidates[tierIdx];
+      if (!candidate) {
+        // Exhausted all tiers — show error
+        setError("Failed to load stream after trying all bandwidth tiers. The source may be unavailable.");
+        setLoading(false);
+        return;
+      }
+
+      setLoadMode(candidate.mode);
+      const effectiveUrl = candidate.url;
+
+      // Clean up any previous HLS instance before trying a new URL
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+
+      if (streamType === "hls") {
+        if (Hls.isSupported()) {
+          const hls = new Hls({
+            enableWorker: true,
+            // ✅ Only set non-forbidden headers via xhrSetup.
+            // Referer/Origin are forbidden in browser XHR and will be silently
+            // stripped — they only work via the server-side proxy tiers.
+            xhrSetup: (xhr) => {
+              if (streamHeaders && candidate.mode === "direct") {
+                Object.entries(streamHeaders).forEach(([k, v]) => {
+                  try {
+                    xhr.setRequestHeader(k, v);
+                  } catch {
+                    /* forbidden header — silently ignored */
+                  }
+                });
+              }
+            },
+          });
+          hlsRef.current = hls;
+          hls.loadSource(effectiveUrl);
+          hls.attachMedia(video);
+
+          hls.on(Hls.Events.MANIFEST_PARSED, (_evt, data) => {
+            if (cancelled) return;
+            const levels: HlsLevelInfo[] = (data.levels || [])
+              .map((lvl, i) => ({
+                index: i,
+                height: lvl.height || 0,
+                bitrate: lvl.bitrate || 0,
+                label: lvl.height ? `${lvl.height}p` : lvl.name || `Level ${i + 1}`,
+              }))
+              .filter((lvl, i, arr) =>
+                arr.findIndex((x) => x.height === lvl.height) === i
+              )
+              .sort((a, b) => b.height - a.height);
+            setHlsLevels(levels);
+            // ✅ Manifest loaded successfully — current tier works.
+            // Reset tier index so a future error starts from this tier.
+            tierIdxRef.current = tierIdx;
+          });
+
+          hls.on(Hls.Events.LEVEL_SWITCHED, (_evt, data) => {
+            if (!cancelled) setCurrentLevel(data.level);
+          });
+
+          hls.on(Hls.Events.ERROR, (_evt, data) => {
+            if (cancelled) return;
+            // ✅ On fatal error, advance to the next tier before giving up.
+            // This is what makes the smart loader "auto-fallback":
+            //   - Direct fails (CORS/Referer) → try manifest-proxy
+            //   - Manifest-proxy fails (segments need Referer) → try full-proxy
+            //   - Full-proxy fails → real error, show to user
+            if (data.fatal) {
+              const nextIdx = tierIdx + 1;
+              if (nextIdx < candidates.length) {
+                console.warn(
+                  `[player] HLS tier ${tierIdx} (${candidate.mode}) failed: ${data.details} — falling back to tier ${nextIdx} (${candidates[nextIdx]?.mode})`
+                );
+                tryLoadTier(nextIdx);
+              } else {
+                setError(`Playback error: ${data.details}`);
+                setLoading(false);
+              }
+            }
+          });
+        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          // Safari native HLS
+          video.src = effectiveUrl;
+        } else {
+          setError("HLS is not supported in this browser.");
+          setLoading(false);
+        }
+      } else {
+        // MP4 / DASH — direct <video src>
+        video.src = effectiveUrl;
+      }
+    };
+
+    // ── Video element event handlers ──
     const onLoaded = () => {
       if (cancelled) return;
       setLoading(false);
@@ -240,7 +410,17 @@ export function YouTubeStylePlayer({
       }
     };
     const onError = () => {
-      if (!cancelled) {
+      if (cancelled) return;
+      // ✅ MP4/DASH error — advance to next tier if available
+      const currentIdx = tierIdxRef.current;
+      const nextIdx = currentIdx + 1;
+      if (nextIdx < candidates.length) {
+        console.warn(
+          `[player] video tier ${currentIdx} (${candidates[currentIdx]?.mode}) failed — falling back to tier ${nextIdx} (${candidates[nextIdx]?.mode})`
+        );
+        tierIdxRef.current = nextIdx;
+        tryLoadTier(nextIdx);
+      } else {
         setError("Failed to load stream. The source may be unavailable.");
         setLoading(false);
       }
@@ -273,62 +453,8 @@ export function YouTubeStylePlayer({
     video.addEventListener("waiting", onWaiting);
     video.addEventListener("canplay", onCanPlay);
 
-    if (streamType === "hls") {
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          xhrSetup: (xhr) => {
-            if (streamHeaders) {
-              Object.entries(streamHeaders).forEach(([k, v]) => {
-                try {
-                  xhr.setRequestHeader(k, v);
-                } catch {
-                  /* ignore */
-                }
-              });
-            }
-          },
-        });
-        hlsRef.current = hls;
-        hls.loadSource(effectiveUrl);
-        hls.attachMedia(video);
-
-        hls.on(Hls.Events.MANIFEST_PARSED, (_evt, data) => {
-          if (cancelled) return;
-          const levels: HlsLevelInfo[] = (data.levels || [])
-            .map((lvl, i) => ({
-              index: i,
-              height: lvl.height || 0,
-              bitrate: lvl.bitrate || 0,
-              label: lvl.height ? `${lvl.height}p` : lvl.name || `Level ${i + 1}`,
-            }))
-            // De-duplicate by height (keep highest bitrate for each height)
-            .filter((lvl, i, arr) =>
-              arr.findIndex((x) => x.height === lvl.height) === i
-            )
-            .sort((a, b) => b.height - a.height);
-          setHlsLevels(levels);
-        });
-
-        hls.on(Hls.Events.LEVEL_SWITCHED, (_evt, data) => {
-          if (!cancelled) setCurrentLevel(data.level);
-        });
-
-        hls.on(Hls.Events.ERROR, (_evt, data) => {
-          if (data.fatal) {
-            setError(`Playback error: ${data.details}`);
-            setLoading(false);
-          }
-        });
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = effectiveUrl;
-      } else {
-        setError("HLS is not supported in this browser.");
-        setLoading(false);
-      }
-    } else {
-      video.src = effectiveUrl;
-    }
+    // ✅ Kick off the first tier
+    tryLoadTier(0);
 
     return () => {
       cancelled = true;
@@ -897,6 +1023,32 @@ export function YouTubeStylePlayer({
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/15 text-white font-medium">
               {sourceName ?? (streamType === "hls" ? "HLS" : streamType.toUpperCase())}
             </span>
+            {/* ✅ Bandwidth-mode badge — Direct (green) or Proxied (amber) */}
+            {loadMode === "direct" ? (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300 border border-emerald-400/30"
+                title="Direct client-side fetch — 0 Vercel bandwidth. Video streams straight from the provider CDN to your browser."
+              >
+                <Zap className="h-2.5 w-2.5" />
+                DIRECT
+              </span>
+            ) : loadMode === "manifest-proxy" ? (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300/90 border border-emerald-400/20"
+                title="Manifest-only proxy — ~5KB through Vercel (the .m3u8 file). Segments stream direct from CDN to your browser."
+              >
+                <Zap className="h-2.5 w-2.5" />
+                DIRECT+
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30"
+                title="Full proxy fallback — video flows through Vercel. Used only when the provider enforces Referer on segments. Consider switching providers to save bandwidth."
+              >
+                <Shield className="h-2.5 w-2.5" />
+                PROXIED
+              </span>
+            )}
             <button
               onClick={() => setShowShortcuts(true)}
               className="p-1.5 rounded-md text-white hover:bg-white/15 transition-colors"
