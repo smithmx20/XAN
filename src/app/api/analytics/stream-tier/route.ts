@@ -18,7 +18,7 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 5;
 
-const VALID_TIERS = ["direct", "manifest-proxy", "full-proxy", "failed"];
+const VALID_TIERS = ["direct", "manifest-proxy", "cf-proxy", "full-proxy", "failed"];
 
 interface AnalyticsPayload {
   provider?: unknown;

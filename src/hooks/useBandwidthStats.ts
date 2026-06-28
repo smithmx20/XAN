@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 
-export type TierResult = "direct" | "manifest-proxy" | "full-proxy" | "failed";
+export type TierResult = "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy" | "failed";
 
 export interface TierStatKey {
   /** Provider name from the stream API (e.g. "allanime", "consumet/animepahe", "demo") */

@@ -541,11 +541,16 @@ export default function SettingsPage() {
                 server bandwidth (best).{" "}
                 <span className="text-emerald-400/80 font-medium">DIRECT+</span> ={" "}
                 manifest-proxy, ~5KB per episode (excellent).{" "}
+                <span className="text-cyan-400 font-medium">CF</span> ={" "}
+                Cloudflare Worker proxy, 0 Vercel bandwidth (free tier, 100k
+                req/day — excellent for Referer-enforced streams).{" "}
                 <span className="text-amber-400 font-medium">PROXIED</span> =
-                full-proxy fallback (uses server bandwidth).{" "}
+                full-proxy fallback through Vercel (uses server bandwidth).{" "}
                 <span className="text-red-400 font-medium">FAILED</span> = all
-                tiers failed. Providers with high PROXIED counts are
-                bandwidth-expensive — consider deprecating them.
+                tiers failed. Providers with high CF counts are saving your
+                Vercel quota — those with high PROXIED counts are still
+                eating it (consider adding their hosts to the CF Worker
+                allowlist if missing).
               </p>
             </div>
           </CardContent>
@@ -940,7 +945,7 @@ function BandwidthStatsTable({ stats }: { stats: TierStat[] }) {
           provider: s.provider,
           sourceName: s.sourceName,
           streamType: s.streamType,
-          tiers: { "direct": 0, "manifest-proxy": 0, "full-proxy": 0, "failed": 0 },
+          tiers: { "direct": 0, "manifest-proxy": 0, "cf-proxy": 0, "full-proxy": 0, "failed": 0 },
           total: 0,
           lastSeen: 0,
         };
@@ -967,6 +972,7 @@ function BandwidthStatsTable({ stats }: { stats: TierStat[] }) {
               <th className="text-left font-medium text-muted-foreground px-3 py-2">Type</th>
               <th className="text-right font-medium text-muted-foreground px-3 py-2">DIRECT</th>
               <th className="text-right font-medium text-muted-foreground px-3 py-2">DIRECT+</th>
+              <th className="text-right font-medium text-muted-foreground px-3 py-2">CF</th>
               <th className="text-right font-medium text-muted-foreground px-3 py-2">PROXIED</th>
               <th className="text-right font-medium text-muted-foreground px-3 py-2">FAILED</th>
               <th className="text-right font-medium text-muted-foreground px-3 py-2">Total</th>
@@ -984,6 +990,7 @@ function BandwidthStatsTable({ stats }: { stats: TierStat[] }) {
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-emerald-300">{g.tiers.direct || <span className="text-muted-foreground/30">—</span>}</td>
                 <td className="px-3 py-2 text-right font-mono text-emerald-300/80">{g.tiers["manifest-proxy"] || <span className="text-muted-foreground/30">—</span>}</td>
+                <td className="px-3 py-2 text-right font-mono text-cyan-300">{g.tiers["cf-proxy"] || <span className="text-muted-foreground/30">—</span>}</td>
                 <td className="px-3 py-2 text-right font-mono text-amber-300">{g.tiers["full-proxy"] || <span className="text-muted-foreground/30">—</span>}</td>
                 <td className="px-3 py-2 text-right font-mono text-red-300">{g.tiers.failed || <span className="text-muted-foreground/30">—</span>}</td>
                 <td className="px-3 py-2 text-right font-mono font-semibold text-foreground">{g.total}</td>
@@ -992,7 +999,7 @@ function BandwidthStatsTable({ stats }: { stats: TierStat[] }) {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-xan-border bg-xan-card/40">
-              <td colSpan={7} className="px-3 py-2 text-right text-muted-foreground font-medium">Total plays tracked</td>
+              <td colSpan={8} className="px-3 py-2 text-right text-muted-foreground font-medium">Total plays tracked</td>
               <td className="px-3 py-2 text-right font-mono font-bold text-foreground">{grandTotal}</td>
             </tr>
           </tfoot>

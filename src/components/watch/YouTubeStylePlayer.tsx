@@ -58,6 +58,7 @@ import {
   Repeat,
   Zap,
   Shield,
+  Cloud,
 } from "lucide-react";
 import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
 
@@ -90,7 +91,7 @@ interface YouTubeStylePlayerProps {
    * Called when the player settles on a tier (success or all-failed).
    * Used by the analytics hook to track which providers land on which tier.
    */
-  onTierResolved?: (tier: "direct" | "manifest-proxy" | "full-proxy" | "failed") => void;
+  onTierResolved?: (tier: "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy" | "failed") => void;
 }
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -107,13 +108,23 @@ interface HlsLevelInfo {
  *   "direct"          — browser loads the raw stream URL; 0 Vercel bytes
  *   "manifest-proxy"  — server proxies ONLY the .m3u8 manifest (~5KB);
  *                       segments load direct from CDN; ~0 Vercel bytes
- *   "full-proxy"      — server proxies everything (fallback); uses Vercel BW
+ *   "cf-proxy"        — Cloudflare Worker proxies everything WITH Referer
+ *                       headers; 0 Vercel bytes (CF free tier handles BW)
+ *   "full-proxy"      — Vercel proxies everything (last-resort fallback);
+ *                       uses Vercel BW
  *
  * The player tries tiers in order and auto-advances on load errors.
- * For HLS:  direct → manifest-proxy → full-proxy
- * For MP4:  direct → full-proxy  (MP4 has no manifest to split)
+ * For HLS:  direct → manifest-proxy → cf-proxy → full-proxy
+ * For MP4:  direct → cf-proxy → full-proxy  (MP4 has no manifest to split)
+ *
+ * cf-proxy is only inserted when NEXT_PUBLIC_CF_WORKER_URL is set. If the
+ * env var is missing, the cascade skips it (backward compatible).
  */
-type LoadMode = "direct" | "manifest-proxy" | "full-proxy";
+type LoadMode = "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy";
+
+// ✅ Cloudflare Worker URL — set via Vercel env var NEXT_PUBLIC_CF_WORKER_URL.
+// Read once at module load. If empty, the cf-proxy tier is skipped.
+const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
 
 /**
  * Compute the ordered list of (mode, effectiveUrl) candidates to try.
@@ -142,36 +153,46 @@ function buildLoadCandidates(
     headerParams.set(`h_${k}`, v);
   }
   const headerParamStr = headerParams.toString();
+  const encodedStreamUrl = encodeURIComponent(streamUrl);
 
-  // ✅ "proxy-only" — skip direct + manifest-proxy, go straight to full-proxy.
-  // Use case: user's ISP blocks the CDN, so direct/manifest-proxy always fail.
+  // ✅ CF Worker URL builder (only used when CF_WORKER_URL is configured)
+  const cfProxyCandidate = CF_WORKER_URL
+    ? {
+        mode: "cf-proxy" as const,
+        url: `${CF_WORKER_URL}/?url=${encodedStreamUrl}&${headerParamStr}`,
+      }
+    : null;
+
+  const fullProxyCandidate = {
+    mode: "full-proxy" as const,
+    url: `/api/proxy_stream?url=${encodedStreamUrl}&${headerParamStr}`,
+  };
+
+  // ✅ "proxy-only" — skip direct + manifest-proxy + cf-proxy, go straight
+  // to full-proxy. Use case: user's ISP blocks the CDN AND the CF Worker.
   if (bandwidthMode === "proxy-only") {
-    return [
-      {
-        mode: "full-proxy",
-        url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
-      },
-    ];
+    return [fullProxyCandidate];
   }
 
   if (streamType === "hls") {
-    // HLS gets the full 3-tier cascade:
+    // HLS gets the full cascade:
     //   1. Direct (will fail if Referer enforced, but costs 0 bytes to try)
     //   2. Manifest-proxy (server fetches tiny .m3u8 with headers, rewrites
     //      segment URLs to absolute; segments then load direct from CDN)
-    //   3. Full-proxy (fallback — proxies all segments through Vercel)
+    //   3. CF-Proxy (Cloudflare Worker fetches everything with Referer;
+    //      0 Vercel BW — only inserted if NEXT_PUBLIC_CF_WORKER_URL is set)
+    //   4. Full-proxy (last-resort fallback — proxies all through Vercel)
     const candidates: Array<{ mode: LoadMode; url: string }> = [
       { mode: "direct", url: streamUrl },
       {
         mode: "manifest-proxy",
-        url: `/api/manifest-proxy?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
-      },
-      {
-        mode: "full-proxy",
-        url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
+        url: `/api/manifest-proxy?url=${encodedStreamUrl}&${headerParamStr}`,
       },
     ];
-    // ✅ "direct-only" — drop manifest-proxy and full-proxy fallbacks.
+    if (cfProxyCandidate) candidates.push(cfProxyCandidate);
+    candidates.push(fullProxyCandidate);
+
+    // ✅ "direct-only" — drop everything except direct.
     // Use case: user wants 0 Vercel bandwidth at the cost of some streams failing.
     if (bandwidthMode === "direct-only") {
       return candidates.slice(0, 1);
@@ -179,14 +200,12 @@ function buildLoadCandidates(
     return candidates;
   }
 
-  // MP4 / DASH — no manifest to split, so only direct + full-proxy
+  // MP4 / DASH — no manifest to split, so: direct → cf-proxy → full-proxy
   const candidates: Array<{ mode: LoadMode; url: string }> = [
     { mode: "direct", url: streamUrl },
-    {
-      mode: "full-proxy",
-      url: `/api/proxy_stream?url=${encodeURIComponent(streamUrl)}&${headerParamStr}`,
-    },
   ];
+  if (cfProxyCandidate) candidates.push(cfProxyCandidate);
+  candidates.push(fullProxyCandidate);
   if (bandwidthMode === "direct-only") {
     return candidates.slice(0, 1);
   }
@@ -313,7 +332,7 @@ export function YouTubeStylePlayer({
 
     // ✅ Helper: fire onTierResolved exactly once per load cycle.
     // Called when a tier succeeds (manifest parsed / canplay) or when all fail.
-    const fireTierResolved = (tier: "direct" | "manifest-proxy" | "full-proxy" | "failed") => {
+    const fireTierResolved = (tier: "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy" | "failed") => {
       if (cancelled) return;
       if (tierLoggedRef.current === tier) return; // dedupe
       tierLoggedRef.current = tier;
@@ -1105,7 +1124,7 @@ export function YouTubeStylePlayer({
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/15 text-white font-medium">
               {sourceName ?? (streamType === "hls" ? "HLS" : streamType.toUpperCase())}
             </span>
-            {/* ✅ Bandwidth-mode badge — Direct (green) or Proxied (amber) */}
+            {/* ✅ Bandwidth-mode badge — Direct (green) / CF (cyan) / Proxied (amber) */}
             {loadMode === "direct" ? (
               <span
                 className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300 border border-emerald-400/30"
@@ -1122,10 +1141,18 @@ export function YouTubeStylePlayer({
                 <Zap className="h-2.5 w-2.5" />
                 DIRECT+
               </span>
+            ) : loadMode === "cf-proxy" ? (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/30"
+                title="Cloudflare Worker proxy — 0 Vercel bandwidth. Video streams through a free Cloudflare Worker that adds the Referer header the provider requires. Free tier: 100k req/day."
+              >
+                <Cloud className="h-2.5 w-2.5" />
+                CF
+              </span>
             ) : (
               <span
                 className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30"
-                title="Full proxy fallback — video flows through Vercel. Used only when the provider enforces Referer on segments. Consider switching providers to save bandwidth."
+                title="Full proxy fallback — video flows through Vercel. Used only when the CF Worker is unavailable or rate-limited. Eats Vercel bandwidth quota."
               >
                 <Shield className="h-2.5 w-2.5" />
                 PROXIED

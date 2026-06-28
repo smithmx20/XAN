@@ -1,0 +1,12 @@
+# Cloudflare Worker config for XAN stream proxy
+# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "xan-stream-proxy"
+main = "worker.js"
+compatibility_date = "2024-12-01"
+
+# Workers don't need a "routes" section — they automatically get a URL at:
+#   https://xan-stream-proxy.<your-account-subdomain>.workers.dev
+#
+# After deploying, copy that URL and set it as NEXT_PUBLIC_CF_WORKER_URL
+# in your Vercel project's environment variables.

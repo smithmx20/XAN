@@ -91,7 +91,7 @@ export function VideoPlayer({
   // Uses refs so the callback identity never changes (avoids re-running the
   // stream-loader effect in YouTubeStylePlayer).
   const stableOnTierResolved = useCallback(
-    (tier: "direct" | "manifest-proxy" | "full-proxy" | "failed") => {
+    (tier: "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy" | "failed") => {
       logTierResultRef.current?.({
         provider: stream?.provider ?? "unknown",
         sourceName: stream?.sourceName ?? "unknown",
