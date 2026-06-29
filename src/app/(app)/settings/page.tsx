@@ -41,6 +41,7 @@ import {
   BarChart3,
   ListVideo,
   MonitorPlay,
+  Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -103,6 +104,21 @@ const SORT_OPTIONS: { value: Settings["defaultSort"]; label: string }[] = [
   { value: "score", label: "Highest score" },
   { value: "newest", label: "Newest first" },
   { value: "oldest", label: "Oldest first" },
+];
+
+// ✅ Known source names — used in the Source filters section.
+// These are the sourceName values that appear in the stream API response.
+const KNOWN_SOURCES: { name: string; type: "mp4" | "hls" | "iframe"; desc: string }[] = [
+  { name: "Yt-mp4", type: "mp4", desc: "AllAnime — tools.fast4speed.rsvp. Blocks CF, uses Vercel proxy." },
+  { name: "Mp4", type: "mp4", desc: "AllAnime — mp4upload.com. Download page, may not play directly." },
+  { name: "Sw", type: "iframe", desc: "AllAnime — StreamWish embed. 0 Vercel BW (iframe)." },
+  { name: "Ok", type: "iframe", desc: "AllAnime — Ok.ru embed. 0 Vercel BW (iframe)." },
+  { name: "Uni", type: "iframe", desc: "AllAnime — Uni embed (allanime.uns.bio). 0 Vercel BW." },
+  { name: "Ak", type: "mp4", desc: "AllAnime — Ak stream. May work through CF Worker." },
+  { name: "Zen", type: "iframe", desc: "FlixCloud embed. Often blocked by Cloudflare." },
+  { name: "Koto", type: "iframe", desc: "MegaPlay embed. 0 Vercel BW (iframe)." },
+  { name: "Pahe-Kiwi-Stream", type: "mp4", desc: "AnimePahe — Kiwi-Stream download. Via CF Worker proxy." },
+  { name: "Gogoanime", type: "hls", desc: "Gogoanime — HLS/MP4 scraped from gogoanime.fi." },
 ];
 
 // ─── Page ───────────────────────────────────────────────────────────────────
@@ -500,6 +516,83 @@ export default function SettingsPage() {
                 onCheckedChange={(v) => update("showSourceSwitcher", v)}
               />
             </SettingRow>
+
+            {/* ✅ Source filters — toggle individual sources on/off */}
+            <div className="pt-6 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium text-foreground flex items-center gap-2">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    Source filters
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Toggle individual stream sources on or off. Disabled sources are
+                    hidden from the Servers panel and never auto-selected. Useful for
+                    hiding sources that never work for you (e.g. ones that always fall
+                    back to Vercel proxy).
+                  </p>
+                </div>
+              </div>
+
+              {/* Known source names with toggles */}
+              <div className="space-y-1.5">
+                {KNOWN_SOURCES.map((source) => {
+                  const isEnabled = !settings.disabledSources.includes(source.name);
+                  return (
+                    <div
+                      key={source.name}
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg border transition-colors ${
+                        isEnabled
+                          ? "bg-xan-card/60 border-xan-border"
+                          : "bg-red-500/5 border-red-500/20"
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-foreground font-mono">
+                            {source.name}
+                          </span>
+                          <span className={`text-[9px] font-bold uppercase px-1 py-0.5 rounded ${
+                            source.type === "iframe" ? "bg-purple-500/20 text-purple-400"
+                            : source.type === "hls" ? "bg-blue-500/20 text-blue-400"
+                            : "bg-green-500/20 text-green-400"
+                          }`}>
+                            {source.type}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          {source.desc}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={isEnabled}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            // Remove from disabled list
+                            update("disabledSources", settings.disabledSources.filter((n) => n !== source.name));
+                          } else {
+                            // Add to disabled list
+                            update("disabledSources", [...settings.disabledSources, source.name]);
+                          }
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Reset button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => update("disabledSources", [])}
+                disabled={settings.disabledSources.length === 0}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Enable all sources
+              </Button>
+            </div>
 
             {/* ✅ Provider priority — reorder which provider is tried first */}
             <div className="pt-6 space-y-3">

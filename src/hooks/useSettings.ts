@@ -51,6 +51,13 @@ export interface Settings {
   showSourceSwitcher: boolean;
 
   /**
+   * Source names the user has disabled (toggled off).
+   * Sources matching these names are filtered out before display and playback.
+   * Uses sourceName field (e.g. "Yt-mp4", "Mp4", "Sw", "Ok", "Zen", "Koto", "Pahe-Kiwi-Stream", "Gogoanime")
+   */
+  disabledSources: string[];
+
+  /**
    * Provider priority order — which provider's sources to try first.
    * Array of provider IDs in priority order (highest first).
    * The player auto-picks the highest-priority provider's best source.
@@ -81,6 +88,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultAudioMode: "sub",
   bandwidthMode: "auto",
   showSourceSwitcher: true,
+  disabledSources: [],
   providerPriority: ["allanime", "zen", "koto", "pahe", "gogoanime"],
   hideAdult: true,
   hideSpoilers: false,

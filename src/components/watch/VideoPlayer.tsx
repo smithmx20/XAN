@@ -292,11 +292,23 @@ export function VideoPlayer({
               }
             }
           }
+          // ✅ Filter out disabled sources (user toggled them off in Settings)
+          const disabled = settings.disabledSources;
+          const enabledSources = disabled.length > 0
+            ? sources.filter((s) => !disabled.includes(s.sourceName ?? ""))
+            : sources;
+
+          if (enabledSources.length === 0) {
+            setError("All sources are disabled. Enable some sources in Settings → Bandwidth → Source filters.");
+            setLoading(false);
+            return;
+          }
+
           // ✅ Sort sources by provider priority (from settings) + bandwidth score.
           // Higher-priority providers come first; within each provider, the most
           // bandwidth-friendly source comes first.
           const priority = settings.providerPriority;
-          const sortedSources = [...sources].sort((a, b) => {
+          const sortedSources = [...enabledSources].sort((a, b) => {
             const aPriority = priority.indexOf(a.provider ?? "allanime");
             const bPriority = priority.indexOf(b.provider ?? "allanime");
             const aIdx = aPriority === -1 ? 999 : aPriority;
