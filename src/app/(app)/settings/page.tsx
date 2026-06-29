@@ -412,11 +412,12 @@ export default function SettingsPage() {
                   update("bandwidthMode", v as Settings["bandwidthMode"])
                 }
               >
-                <SelectTrigger className="w-44 bg-xan-card border-xan-border">
+                <SelectTrigger className="w-48 bg-xan-card border-xan-border">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="auto">Auto (recommended)</SelectItem>
+                  <SelectItem value="auto-no-vercel">Auto (no Vercel BW)</SelectItem>
                   <SelectItem value="direct-only">Direct only</SelectItem>
                   <SelectItem value="cf-only">CF Worker only</SelectItem>
                   <SelectItem value="direct-cf-only">Direct + CF only</SelectItem>
@@ -434,6 +435,17 @@ export default function SettingsPage() {
                   manifest-proxy (~5KB per episode for HLS), then the
                   Cloudflare Worker (0 Vercel BW), then full-proxy as a
                   last-resort fallback. Best balance of compatibility and cost.
+                </p>
+              )}
+              {settings.bandwidthMode === "auto-no-vercel" && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-emerald-400">Auto (no Vercel BW):</strong>{" "}
+                  Same as Auto but WITHOUT the full-proxy fallback. Tries
+                  direct → manifest-proxy (HLS only) → CF Worker. Zero Vercel
+                  bandwidth in all cases. If all 0-Vercel-BW tiers fail,
+                  playback fails (no Vercel fallback). Best for users who want
+                  0 Vercel BW but need manifest-proxy for HLS streams (unlike
+                  "Direct + CF only" which skips it).
                 </p>
               )}
               {settings.bandwidthMode === "direct-only" && (

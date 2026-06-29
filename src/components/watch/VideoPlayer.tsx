@@ -20,6 +20,7 @@ import { AlertCircle, Loader2, RotateCcw, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSettings } from "@/hooks/useSettings";
 import { useBandwidthStats } from "@/hooks/useBandwidthStats";
+import { findRecommendedSourceIdx, type SourceItem } from "./SourceSwitcher";
 
 interface VideoPlayerProps {
   animeId: number;
@@ -34,8 +35,9 @@ interface VideoPlayerProps {
   mode: "sub" | "dub";
   /** Called when dub falls back to sub for this episode */
   onFallbackToSub?: () => void;
-  /** Called when the sources list is loaded — parent uses it to render SourceSwitcher */
-  onSourcesLoaded?: (sources: StreamData[]) => void;
+  /** Called when the sources list is loaded — parent uses it to render SourceSwitcher.
+   *  Also receives the recommended source index (most bandwidth-friendly). */
+  onSourcesLoaded?: (sources: StreamData[], recommendedIdx: number) => void;
   /** Called when the active source index changes (manual or auto-fallback) */
   onSourceChange?: (idx: number, failedIdxs: Set<number>) => void;
   /** Parent can call this to manually switch sources (via ref) */
@@ -122,8 +124,10 @@ export function VideoPlayer({
   const stableOnEpisodeEnd = useCallback(() => onEpisodeEnd?.(), [onEpisodeEnd]);
 
   // ✅ Notify parent when sources load or source index changes
+  // Also compute and pass the recommended source index for the ⭐ badge
   useEffect(() => {
-    onSourcesLoaded?.(allSources);
+    const recIdx = findRecommendedSourceIdx(allSources as SourceItem[]);
+    onSourcesLoaded?.(allSources, recIdx);
   }, [allSources, onSourcesLoaded]);
 
   useEffect(() => {
@@ -268,7 +272,19 @@ export function VideoPlayer({
             }
           }
           setAllSources(sources);
-          setStream(primaryStream);
+          // ✅ Auto-pick the most bandwidth-friendly source (Idea 1: Recommended).
+          // Instead of always starting at sources[0] (which is usually Yt-mp4
+          // and often falls back to full-proxy), pick the source with the
+          // highest bandwidth-friendliness score.
+          const recommendedIdx = findRecommendedSourceIdx(sources as SourceItem[]);
+          if (recommendedIdx > 0 && sources[recommendedIdx]) {
+            // Recommended source is not the first one — auto-switch to it
+            setSourceIdx(recommendedIdx);
+            setStream(sources[recommendedIdx]);
+          } else {
+            // Recommended is sources[0] (or only one source) — use it directly
+            setStream(primaryStream);
+          }
           setLoading(false);
           if (json?.fallbackMode) {
             onFallbackToSubRef.current?.();

@@ -78,6 +78,8 @@ function WatchPageInner({ params }: PageProps) {
   >([]);
   const [currentSourceIdx, setCurrentSourceIdx] = useState(0);
   const [failedSourceIdxs, setFailedSourceIdxs] = useState<Set<number>>(new Set());
+  // ✅ Index of the most bandwidth-friendly source (for the ⭐ Recommended badge)
+  const [recommendedIdx, setRecommendedIdx] = useState(-1);
   // ✅ Ref to expose the manual source-switch function to the VideoPlayer
   const selectSourceRef = useRef<((idx: number) => void) | null>(null);
 
@@ -329,7 +331,10 @@ function WatchPageInner({ params }: PageProps) {
               onProgress={handleProgress}
               mode={mode}
               onFallbackToSub={handleFallbackToSub}
-              onSourcesLoaded={(s) => setSources(s)}
+              onSourcesLoaded={(s, recIdx) => {
+                setSources(s);
+                setRecommendedIdx(recIdx);
+              }}
               onSourceChange={(idx, failed) => {
                 setCurrentSourceIdx(idx);
                 setFailedSourceIdxs(failed);
@@ -355,6 +360,7 @@ function WatchPageInner({ params }: PageProps) {
               sources={sources}
               currentSourceIdx={currentSourceIdx}
               failedSourceIdxs={failedSourceIdxs}
+              recommendedIdx={recommendedIdx}
               onSelectSource={(idx) => selectSourceRef.current?.(idx)}
             />
           )}

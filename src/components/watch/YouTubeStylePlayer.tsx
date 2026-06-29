@@ -83,13 +83,15 @@ interface YouTubeStylePlayerProps {
   /**
    * Bandwidth loading mode — controls the tier cascade:
    *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy (default)
+   *   "auto-no-vercel"  — direct → manifest-proxy → cf-proxy (NO full-proxy; 0 Vercel BW)
    *   "direct-only"     — direct only; no proxy
    *   "cf-only"         — CF Worker only; 0 Vercel BW (requires NEXT_PUBLIC_CF_WORKER_URL)
-   *   "direct-cf-only"  — direct → cf-proxy; 0 Vercel BW, no full-proxy fallback
+   *   "direct-cf-only"  — direct → cf-proxy; 0 Vercel BW, no manifest-proxy, no full-proxy
    *   "proxy-only"      — full-proxy only (Vercel); for ISP-blocked CDNs
    */
   bandwidthMode?:
     | "auto"
+    | "auto-no-vercel"
     | "direct-only"
     | "cf-only"
     | "direct-cf-only"
@@ -141,9 +143,10 @@ const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
  *
  * @param bandwidthMode controls the cascade:
  *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy
+ *   "auto-no-vercel"  — direct → manifest-proxy → cf-proxy (NO full-proxy; 0 Vercel BW)
  *   "direct-only"     — direct only
  *   "cf-only"         — cf-proxy only (requires NEXT_PUBLIC_CF_WORKER_URL)
- *   "direct-cf-only"  — direct → cf-proxy (0 Vercel BW, no full-proxy fallback)
+ *   "direct-cf-only"  — direct → cf-proxy (0 Vercel BW, no manifest-proxy, no full-proxy)
  *   "proxy-only"      — full-proxy only (Vercel)
  */
 function buildLoadCandidates(
@@ -152,6 +155,7 @@ function buildLoadCandidates(
   headers?: Record<string, string>,
   bandwidthMode:
     | "auto"
+    | "auto-no-vercel"
     | "direct-only"
     | "cf-only"
     | "direct-cf-only"
@@ -225,6 +229,27 @@ function buildLoadCandidates(
   // Fails for Referer-enforced streams (most MP4 sources).
   if (bandwidthMode === "direct-only") {
     return [directCandidate];
+  }
+
+  // ─── Mode: "auto-no-vercel" — direct → manifest-proxy → cf-proxy (NO full-proxy) ───
+  // Use case: user wants 0 Vercel BW but wants manifest-proxy for HLS (which
+  // "direct-cf-only" skips). This fixes HLS streams that need Referer for the
+  // .m3u8 manifest but have signed segment URLs (segments load direct from CDN).
+  // If all 0-Vercel-BW tiers fail, playback fails (no full-proxy fallback).
+  if (bandwidthMode === "auto-no-vercel") {
+    if (streamType === "hls") {
+      // HLS: direct → manifest-proxy → cf-proxy
+      const candidates: Array<{ mode: LoadMode; url: string }> = [
+        directCandidate,
+        manifestProxyCandidate,
+      ];
+      if (cfProxyCandidate) candidates.push(cfProxyCandidate);
+      return candidates;
+    }
+    // MP4: direct → cf-proxy (no manifest-proxy for MP4)
+    const candidates: Array<{ mode: LoadMode; url: string }> = [directCandidate];
+    if (cfProxyCandidate) candidates.push(cfProxyCandidate);
+    return candidates;
   }
 
   // ─── Mode: "auto" (default) — full cascade ───

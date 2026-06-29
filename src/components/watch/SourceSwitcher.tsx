@@ -12,7 +12,7 @@
 //       ☁️ CF      — CF Worker will handle it (0 Vercel BW)
 //       🟡 PROXIED — full-proxy fallback (uses Vercel BW)
 
-import { ListVideo, Zap, Cloud, Shield, AlertCircle, Check } from "lucide-react";
+import { ListVideo, Zap, Cloud, Shield, AlertCircle, Check, Star } from "lucide-react";
 
 export interface SourceItem {
   url: string;
@@ -28,6 +28,8 @@ interface SourceSwitcherProps {
   currentSourceIdx: number;
   failedSourceIdxs: Set<number>;
   onSelectSource: (idx: number) => void;
+  /** Index of the recommended (most bandwidth-friendly) source — shows ⭐ badge */
+  recommendedIdx?: number;
   className?: string;
 }
 
@@ -58,6 +60,51 @@ function predictTier(
   //   - Else → full-proxy (uses Vercel BW)
   if (CF_WORKER_URL) return "cf-proxy";
   return "full-proxy";
+}
+
+/**
+ * Score a source by bandwidth-friendliness (higher = better).
+ * Used to pick the "Recommended" source on first load.
+ *
+ * Ranking rationale:
+ *   1. no-headers DIRECT (100) — 0 Vercel BW, keeps custom player UI
+ *   2. CF Worker (95)          — 0 Vercel BW, keeps custom UI, depends on CF
+ *   3. iframe DIRECT (90)      — 0 Vercel BW, but loses custom UI (iframe)
+ *   4. manifest-proxy (80)     — ~5KB Vercel BW (HLS only), keeps custom UI
+ *   5. full-proxy (10)         — full Vercel BW, last resort
+ */
+export function scoreSource(source: SourceItem): number {
+  const tier = predictTier(source);
+  const hasHeaders = source.headers && Object.keys(source.headers).length > 0;
+
+  if (tier === "direct") {
+    // Distinguish iframe (loses custom UI) from no-headers direct (keeps UI)
+    if (source.type === "iframe") return 90;
+    if (!hasHeaders) return 100;
+    return 100;
+  }
+  if (tier === "cf-proxy") return 95;
+  if (tier === "manifest-proxy") return 80;
+  return 10; // full-proxy
+}
+
+/**
+ * Find the index of the most bandwidth-friendly source.
+ * Returns -1 if the array is empty.
+ * Ties are broken by lower index (first occurrence wins).
+ */
+export function findRecommendedSourceIdx(sources: SourceItem[]): number {
+  if (sources.length === 0) return -1;
+  let bestIdx = 0;
+  let bestScore = scoreSource(sources[0]);
+  for (let i = 1; i < sources.length; i++) {
+    const score = scoreSource(sources[i]);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 function TierPreviewBadge({ tier }: { tier: ReturnType<typeof predictTier> }) {
@@ -145,6 +192,7 @@ export function SourceSwitcher({
   currentSourceIdx,
   failedSourceIdxs,
   onSelectSource,
+  recommendedIdx,
   className = "",
 }: SourceSwitcherProps) {
   if (sources.length === 0) return null;
@@ -162,6 +210,7 @@ export function SourceSwitcher({
         {sources.map((source, idx) => {
           const isActive = idx === currentSourceIdx;
           const isFailed = failedSourceIdxs.has(idx);
+          const isRecommended = idx === recommendedIdx && !isFailed;
           return (
             <button
               key={`${idx}-${source.url.slice(0, 40)}`}
@@ -172,20 +221,30 @@ export function SourceSwitcher({
                   ? "bg-xan-crimson/15 text-foreground border border-xan-crimson/40"
                   : isFailed
                     ? "hover:bg-red-500/5 text-muted-foreground/50 border border-transparent cursor-not-allowed"
-                    : "hover:bg-xan-card-hover text-muted-foreground border border-transparent"
+                    : isRecommended
+                      ? "hover:bg-xan-card-hover text-foreground border border-emerald-400/30 bg-emerald-500/5"
+                      : "hover:bg-xan-card-hover text-muted-foreground border border-transparent"
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {/* Status icon: ✓ active / ❌ failed / nothing for normal */}
+                  {/* Status icon: ✓ active / ❌ failed / ⭐ recommended / nothing for normal */}
                   {isActive ? (
                     <Check className="h-3 w-3 text-xan-crimson flex-shrink-0" />
                   ) : isFailed ? (
                     <AlertCircle className="h-3 w-3 text-red-400/60 flex-shrink-0" />
+                  ) : isRecommended ? (
+                    <Star className="h-3 w-3 text-emerald-400 fill-emerald-400 flex-shrink-0" />
                   ) : null}
                   <span className="font-mono font-medium truncate">
                     {source.sourceName ?? `Source ${idx + 1}`}
                   </span>
+                  {/* "Recommended" pill badge — only on the recommended source, not when active */}
+                  {isRecommended && !isActive && (
+                    <span className="text-[8px] font-bold tracking-wider px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-400/20 flex-shrink-0">
+                      RECOMMENDED
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <TierPreviewBadge tier={predictTier(source)} />

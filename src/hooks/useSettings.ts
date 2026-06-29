@@ -33,13 +33,15 @@ export interface Settings {
   /**
    * How the player should load video streams. Controls the tier cascade:
    *   "auto"            — direct → manifest-proxy → cf-proxy → full-proxy (default)
+   *   "auto-no-vercel"  — direct → manifest-proxy → cf-proxy (NO full-proxy; 0 Vercel BW)
    *   "direct-only"     — direct only; no proxy (fails for Referer-enforced streams)
    *   "cf-only"         — CF Worker only; 0 Vercel BW but requires NEXT_PUBLIC_CF_WORKER_URL
-   *   "direct-cf-only"  — direct → cf-proxy; 0 Vercel BW, no full-proxy fallback
+   *   "direct-cf-only"  — direct → cf-proxy; 0 Vercel BW, no manifest-proxy, no full-proxy
    *   "proxy-only"      — full-proxy only (Vercel); for users whose ISP blocks CDNs
    */
   bandwidthMode:
     | "auto"
+    | "auto-no-vercel"
     | "direct-only"
     | "cf-only"
     | "direct-cf-only"
