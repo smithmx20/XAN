@@ -322,6 +322,7 @@ function WatchPageInner({ params }: PageProps) {
           <div className="relative">
             <VideoPlayer
               animeId={anime.id}
+              malId={anime.idMal ?? undefined}
               episode={currentEpisode}
               animeTitle={title}
               posterUrl={posterUrl}
@@ -361,6 +362,7 @@ function WatchPageInner({ params }: PageProps) {
               currentSourceIdx={currentSourceIdx}
               failedSourceIdxs={failedSourceIdxs}
               recommendedIdx={recommendedIdx}
+              providerPriority={settings.providerPriority}
               onSelectSource={(idx) => selectSourceRef.current?.(idx)}
             />
           )}

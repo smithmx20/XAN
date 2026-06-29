@@ -20,10 +20,12 @@ import { AlertCircle, Loader2, RotateCcw, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSettings } from "@/hooks/useSettings";
 import { useBandwidthStats } from "@/hooks/useBandwidthStats";
-import { findRecommendedSourceIdx, type SourceItem } from "./SourceSwitcher";
+import { findRecommendedSourceIdx, scoreSource, type SourceItem } from "./SourceSwitcher";
 
 interface VideoPlayerProps {
   animeId: number;
+  /** MyAnimeList ID — needed for AnimePahe (nekostream) provider */
+  malId?: number;
   episode: number;
   animeTitle: string;
   posterUrl?: string;
@@ -55,6 +57,7 @@ interface StreamData {
 
 export function VideoPlayer({
   animeId,
+  malId,
   episode,
   animeTitle,
   posterUrl,
@@ -246,8 +249,9 @@ export function VideoPlayer({
 
     const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
     const modeParam = `&type=${mode}`;
+    const malIdParam = malId ? `&malId=${malId}` : "";
 
-    fetch(`/api/stream/${animeId}/${episode}?${titleParam}${modeParam}`)
+    fetch(`/api/stream/${animeId}/${episode}?${titleParam}${modeParam}${malIdParam}`)
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -288,20 +292,24 @@ export function VideoPlayer({
               }
             }
           }
-          setAllSources(sources);
-          // ✅ Auto-pick the most bandwidth-friendly source (Idea 1: Recommended).
-          // Instead of always starting at sources[0] (which is usually Yt-mp4
-          // and often falls back to full-proxy), pick the source with the
-          // highest bandwidth-friendliness score.
-          const recommendedIdx = findRecommendedSourceIdx(sources as SourceItem[]);
-          if (recommendedIdx > 0 && sources[recommendedIdx]) {
-            // Recommended source is not the first one — auto-switch to it
-            setSourceIdx(recommendedIdx);
-            setStream(sources[recommendedIdx]);
-          } else {
-            // Recommended is sources[0] (or only one source) — use it directly
-            setStream(primaryStream);
-          }
+          // ✅ Sort sources by provider priority (from settings) + bandwidth score.
+          // Higher-priority providers come first; within each provider, the most
+          // bandwidth-friendly source comes first.
+          const priority = settings.providerPriority;
+          const sortedSources = [...sources].sort((a, b) => {
+            const aPriority = priority.indexOf(a.provider ?? "allanime");
+            const bPriority = priority.indexOf(b.provider ?? "allanime");
+            const aIdx = aPriority === -1 ? 999 : aPriority;
+            const bIdx = bPriority === -1 ? 999 : bPriority;
+            if (aIdx !== bIdx) return aIdx - bIdx;
+            // Same provider — sort by bandwidth score (higher = better)
+            return scoreSource(b as SourceItem) - scoreSource(a as SourceItem);
+          });
+
+          setAllSources(sortedSources);
+          // ✅ After sorting, the first source is the best (highest-priority provider + best bandwidth).
+          // Auto-pick it.
+          setStream(sortedSources[0] ?? primaryStream);
           setLoading(false);
           if (json?.fallbackMode) {
             onFallbackToSubRef.current?.();
@@ -320,7 +328,7 @@ export function VideoPlayer({
     return () => {
       cancelled = true;
     };
-  }, [animeId, episode, animeTitle, mode, retryNonce]);
+  }, [animeId, malId, episode, animeTitle, mode, retryNonce]);
 
   if (error) {
     // ✅ If we have failed sources, show the "Tried: ..." message (xancld.xyz style)

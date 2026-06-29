@@ -1,18 +1,19 @@
 "use client";
 
 // components/watch/SourceSwitcher.tsx
-// ✅ Always-visible, clickable sources panel — inspired by xancld.xyz
+// ✅ animex.one-style Sources panel — grouped by provider, grid layout
 // ✅ Shows source name + type badge (mp4/hls/iframe) + bandwidth-tier preview
 // ✅ Click any source to instantly switch (preserves playback position)
 // ✅ Failed sources show a red ❌ indicator
 // ✅ Active source highlighted with crimson border
+// ✅ ⭐ Recommended badge on the best source
 // ✅ Tier preview badges predict which tier each source would use:
 //       🟢 DIRECT  — no headers needed, browser loads direct
 //       🟢 DIRECT+ — HLS with headers, manifest-proxy will be used (~5KB)
 //       ☁️ CF      — CF Worker will handle it (0 Vercel BW)
 //       🟡 PROXIED — full-proxy fallback (uses Vercel BW)
 
-import { ListVideo, Zap, Cloud, Shield, AlertCircle, Check, Star } from "lucide-react";
+import { Zap, Cloud, Shield, AlertCircle, Check, Star, MonitorPlay } from "lucide-react";
 
 export interface SourceItem {
   url: string;
@@ -30,6 +31,8 @@ interface SourceSwitcherProps {
   onSelectSource: (idx: number) => void;
   /** Index of the recommended (most bandwidth-friendly) source — shows ⭐ badge */
   recommendedIdx?: number;
+  /** Provider priority order — providers are displayed in this order */
+  providerPriority?: string[];
   className?: string;
 }
 
@@ -152,126 +155,134 @@ function TierPreviewBadge({ tier }: { tier: ReturnType<typeof predictTier> }) {
   );
 }
 
-function TypeBadge({ type }: { type: SourceItem["type"] }) {
-  const config: Record<
-    SourceItem["type"],
-    { label: string; className: string }
-  > = {
-    mp4: {
-      label: "MP4",
-      className: "bg-green-500/20 text-green-400",
-    },
-    hls: {
-      label: "HLS",
-      className: "bg-blue-500/20 text-blue-400",
-    },
-    iframe: {
-      label: "IFRAME",
-      className: "bg-purple-500/20 text-purple-400",
-    },
-    dash: {
-      label: "DASH",
-      className: "bg-orange-500/20 text-orange-400",
-    },
-  };
-  const c = config[type] ?? {
-    label: type.toUpperCase(),
-    className: "bg-zinc-500/20 text-zinc-400",
-  };
-  return (
-    <span
-      className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${c.className}`}
-    >
-      {c.label}
-    </span>
-  );
-}
-
 export function SourceSwitcher({
   sources,
   currentSourceIdx,
   failedSourceIdxs,
   onSelectSource,
   recommendedIdx,
+  providerPriority = [],
   className = "",
 }: SourceSwitcherProps) {
   if (sources.length === 0) return null;
 
+  // ✅ Group sources by provider, in priority order
+  const providerOrder = providerPriority.length > 0
+    ? providerPriority
+    : [...new Set(sources.map((s) => s.provider ?? "allanime"))];
+
+  // Also include any providers not in the priority list
+  for (const s of sources) {
+    const p = s.provider ?? "allanime";
+    if (!providerOrder.includes(p)) providerOrder.push(p);
+  }
+
+  const providerGroups = providerOrder.map((providerId) => ({
+    providerId,
+    label: providerId === "allanime" ? "AllAnime"
+      : providerId === "zen" ? "Zen"
+      : providerId === "koto" ? "Koto"
+      : providerId === "pahe" ? "AnimePahe"
+      : providerId.charAt(0).toUpperCase() + providerId.slice(1),
+    sources: sources.map((s, idx) => ({ s, idx })).filter(({ s }) => (s.provider ?? "allanime") === providerId),
+  })).filter((g) => g.sources.length > 0);
+
   return (
     <div className={`glass rounded-2xl p-4 ${className}`}>
       <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-        <ListVideo className="h-4 w-4 text-xan-crimson" />
-        Sources
+        <MonitorPlay className="h-4 w-4 text-xan-crimson" />
+        Servers
         <span className="text-xs text-muted-foreground font-normal">
           ({sources.length})
         </span>
       </h3>
-      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 no-scrollbar">
-        {sources.map((source, idx) => {
-          const isActive = idx === currentSourceIdx;
-          const isFailed = failedSourceIdxs.has(idx);
-          const isRecommended = idx === recommendedIdx && !isFailed;
-          return (
-            <button
-              key={`${idx}-${source.url.slice(0, 40)}`}
-              onClick={() => onSelectSource(idx)}
-              disabled={isFailed && !isActive}
-              className={`block w-full text-left px-3 py-2 rounded-lg text-xs transition-all ${
-                isActive
-                  ? "bg-xan-crimson/15 text-foreground border border-xan-crimson/40"
-                  : isFailed
-                    ? "hover:bg-red-500/5 text-muted-foreground/50 border border-transparent cursor-not-allowed"
-                    : isRecommended
-                      ? "hover:bg-xan-card-hover text-foreground border border-emerald-400/30 bg-emerald-500/5"
-                      : "hover:bg-xan-card-hover text-muted-foreground border border-transparent"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {/* Status icon: ✓ active / ❌ failed / ⭐ recommended / nothing for normal */}
-                  {isActive ? (
-                    <Check className="h-3 w-3 text-xan-crimson flex-shrink-0" />
-                  ) : isFailed ? (
-                    <AlertCircle className="h-3 w-3 text-red-400/60 flex-shrink-0" />
-                  ) : isRecommended ? (
-                    <Star className="h-3 w-3 text-emerald-400 fill-emerald-400 flex-shrink-0" />
-                  ) : null}
-                  <span className="font-mono font-medium truncate">
-                    {source.sourceName ?? `Source ${idx + 1}`}
-                  </span>
-                  {/* "Recommended" pill badge — only on the recommended source, not when active */}
-                  {isRecommended && !isActive && (
-                    <span className="text-[8px] font-bold tracking-wider px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-400/20 flex-shrink-0">
-                      RECOMMENDED
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <TierPreviewBadge tier={predictTier(source)} />
-                  <TypeBadge type={source.type} />
-                </div>
-              </div>
-              {/* Show failed reason if applicable */}
-              {isFailed && !isActive && (
-                <p className="text-[10px] text-red-400/60 mt-1 ml-5">
-                  Failed all bandwidth tiers
-                </p>
+
+      {/* Provider groups */}
+      <div className="space-y-3 max-h-64 overflow-y-auto pr-1 no-scrollbar">
+        {providerGroups.map((group) => (
+          <div key={group.providerId}>
+            {/* Provider header */}
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase">
+                {group.label}
+              </span>
+              <span className="text-[10px] text-muted-foreground/50">
+                {group.sources.length}
+              </span>
+              {/* Provider priority indicator */}
+              {providerPriority.length > 0 && (
+                <span className="text-[9px] text-muted-foreground/40 ml-auto">
+                  #{providerPriority.indexOf(group.providerId) + 1}
+                </span>
               )}
-            </button>
-          );
-        })}
+            </div>
+
+            {/* Source grid — 5 columns like animex.one */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-1">
+              {group.sources.map(({ s: source, idx }) => {
+                const isActive = idx === currentSourceIdx;
+                const isFailed = failedSourceIdxs.has(idx);
+                const isRecommended = idx === recommendedIdx && !isFailed;
+                return (
+                  <button
+                    key={`${idx}-${source.url.slice(0, 40)}`}
+                    onClick={() => onSelectSource(idx)}
+                    disabled={isFailed && !isActive}
+                    title={source.sourceName ?? `Source ${idx + 1}`}
+                    className={`relative px-2 py-1.5 rounded-md text-[10px] font-medium transition-all flex flex-col items-center gap-0.5 ${
+                      isActive
+                        ? "bg-xan-crimson/20 text-foreground border border-xan-crimson/50"
+                        : isFailed
+                          ? "bg-red-500/5 text-muted-foreground/40 border border-transparent cursor-not-allowed"
+                          : isRecommended
+                            ? "bg-emerald-500/10 text-foreground border border-emerald-400/30 hover:bg-emerald-500/15"
+                            : "bg-xan-card/60 text-muted-foreground border border-transparent hover:bg-xan-card-hover hover:text-foreground"
+                    }`}
+                  >
+                    {/* Status icon */}
+                    <div className="flex items-center gap-0.5">
+                      {isActive ? (
+                        <Check className="h-2.5 w-2.5 text-xan-crimson" />
+                      ) : isFailed ? (
+                        <AlertCircle className="h-2.5 w-2.5 text-red-400/60" />
+                      ) : isRecommended ? (
+                        <Star className="h-2.5 w-2.5 text-emerald-400 fill-emerald-400" />
+                      ) : null}
+                      <span className="font-mono truncate max-w-[60px]">
+                        {source.sourceName ?? `S${idx + 1}`}
+                      </span>
+                    </div>
+                    {/* Type + tier badges */}
+                    <div className="flex items-center gap-0.5">
+                      <TierPreviewBadge tier={predictTier(source)} />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
+
       {/* Summary footer */}
       <div className="mt-3 pt-2 border-t border-xan-border/40 flex items-center justify-between text-[10px] text-muted-foreground">
         <span>
           {failedSourceIdxs.size > 0
             ? `${failedSourceIdxs.size} failed`
-            : "Click any source to switch"}
+            : "Click any server to switch"}
         </span>
         <span>
-          {sources.filter((s) => predictTier(s) === "direct" || predictTier(s) === "manifest-proxy" || predictTier(s) === "cf-proxy").length} bandwidth-friendly
+          {sources.filter((s) => {
+            const t = predictTier(s);
+            return t === "direct" || t === "manifest-proxy" || t === "cf-proxy";
+          }).length} bandwidth-friendly
         </span>
       </div>
+
+      {/* Hint text — animex.one style */}
+      <p className="mt-1.5 text-center text-[10px] leading-snug text-muted-foreground/60 select-none md:text-left">
+        If current server doesn't work please try other servers beside.
+      </p>
     </div>
   );
 }

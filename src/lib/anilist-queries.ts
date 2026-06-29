@@ -3,6 +3,7 @@
 
 const MEDIA_FIELDS = `
   id
+  idMal
   title {
     romaji
     english

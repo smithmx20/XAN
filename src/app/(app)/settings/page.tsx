@@ -40,6 +40,7 @@ import {
   Activity,
   BarChart3,
   ListVideo,
+  MonitorPlay,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -499,6 +500,94 @@ export default function SettingsPage() {
                 onCheckedChange={(v) => update("showSourceSwitcher", v)}
               />
             </SettingRow>
+
+            {/* ✅ Provider priority — reorder which provider is tried first */}
+            <div className="pt-6 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium text-foreground flex items-center gap-2">
+                    <MonitorPlay className="h-4 w-4 text-muted-foreground" />
+                    Provider priority
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Control the order in which stream providers are tried.
+                    Higher-priority providers are attempted first. Use the
+                    up/down buttons to reorder.
+                  </p>
+                </div>
+              </div>
+
+              {/* Provider list with up/down buttons */}
+              <div className="space-y-1.5">
+                {settings.providerPriority.map((providerId, idx) => {
+                  const info = providerId === "allanime"
+                    ? { name: "AllAnime", desc: "Primary — Yt-mp4, Mp4, StreamWish, Ok.ru" }
+                    : providerId === "zen"
+                      ? { name: "Zen", desc: "FlixCloud HLS embed" }
+                      : providerId === "koto"
+                        ? { name: "Koto", desc: "MegaPlay iframe embed" }
+                        : providerId === "pahe"
+                          ? { name: "AnimePahe", desc: "nekostream MP4 downloads" }
+                          : { name: providerId, desc: "" };
+
+                  return (
+                    <div
+                      key={providerId}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg bg-xan-card/60 border border-xan-border"
+                    >
+                      <span className="text-xs font-mono text-muted-foreground w-6 text-center">
+                        #{idx + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground">{info.name}</p>
+                        <p className="text-[10px] text-muted-foreground">{info.desc}</p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={idx === 0}
+                          onClick={() => {
+                            const newPriority = [...settings.providerPriority];
+                            [newPriority[idx - 1], newPriority[idx]] = [newPriority[idx]!, newPriority[idx - 1]!];
+                            update("providerPriority", newPriority);
+                          }}
+                          className="h-7 w-7 p-0 hover:bg-xan-card-hover"
+                          aria-label="Move up"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5 -rotate-90" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={idx === settings.providerPriority.length - 1}
+                          onClick={() => {
+                            const newPriority = [...settings.providerPriority];
+                            [newPriority[idx + 1], newPriority[idx]] = [newPriority[idx]!, newPriority[idx + 1]!];
+                            update("providerPriority", newPriority);
+                          }}
+                          className="h-7 w-7 p-0 hover:bg-xan-card-hover"
+                          aria-label="Move down"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5 rotate-90" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Reset to defaults */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => update("providerPriority", ["allanime", "zen", "koto", "pahe"])}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Reset to defaults
+              </Button>
+            </div>
 
             {/* ─── Bandwidth Analytics panel ─── */}
             <div className="pt-6 space-y-4">

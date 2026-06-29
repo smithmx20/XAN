@@ -50,6 +50,13 @@ export interface Settings {
   /** Show the Sources panel below the video player (manual source switching) */
   showSourceSwitcher: boolean;
 
+  /**
+   * Provider priority order — which provider's sources to try first.
+   * Array of provider IDs in priority order (highest first).
+   * The player auto-picks the highest-priority provider's best source.
+   */
+  providerPriority: string[];
+
   // ─── Content & Discovery ───
   /** Hide adult/Ecchi/Hentai content from browse & search */
   hideAdult: boolean;
@@ -74,6 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultAudioMode: "sub",
   bandwidthMode: "auto",
   showSourceSwitcher: true,
+  providerPriority: ["allanime", "zen", "koto", "pahe"],
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",

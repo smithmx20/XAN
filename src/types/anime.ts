@@ -40,6 +40,7 @@ export const CoverImageSchema = z
 // ─── Main Anime Schema ───
 export const AnimeSchema = z.object({
   id: z.number(),
+  idMal: z.number().nullable().default(null),
   title: AnimeTitleSchema,
   coverImage: CoverImageSchema,
   bannerImage: z.string().nullable().default(null),

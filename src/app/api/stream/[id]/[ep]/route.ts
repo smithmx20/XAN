@@ -4,6 +4,13 @@
 // - When dub is requested but unavailable, falls back to sub instead of demo
 // - Returns structured error when episode not yet released (instead of silent demo)
 // - Better error context in response
+//
+// ✅ Multi-provider support:
+// - AllAnime (existing) — multiple sources per episode
+// - Zen (flixcloud.cc) — HLS embed
+// - Koto (megaplay.buzz) — iframe embed
+// - AnimePahe (nekostream) — MP4 downloads
+// All providers are fetched in parallel; sources are merged into one array.
 
 import { NextResponse } from "next/server";
 import {
@@ -44,7 +51,113 @@ function streamResultToJSON(s: StreamResult) {
     quality: s.quality,
     sourceName: s.sourceName,
     headers: s.headers,
+    provider: "allanime" as const,
   };
+}
+
+// ✅ Fetch Zen (flixcloud.cc) sources — server-side to bypass Cloudflare
+async function fetchZenSourcesServerSide(
+  anilistId: number,
+  episode: number,
+): Promise<Array<{ url: string; type: "iframe"; quality: string | null; sourceName: string; provider: string }>> {
+  try {
+    const res = await fetch(
+      `https://flixcloud.cc/videos/raw?anilist_id=${anilistId}&episode=${episode}`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    if (json.status !== "success" || !json.data) return [];
+
+    const sources: Array<{ url: string; type: "iframe"; quality: string | null; sourceName: string; provider: string }> = [];
+    for (const item of json.data) {
+      if (item.player_url) {
+        sources.push({
+          url: item.player_url,
+          type: "iframe",
+          quality: item.quality ?? null,
+          sourceName: "Zen",
+          provider: "zen",
+        });
+      }
+    }
+    return sources;
+  } catch (err) {
+    console.warn("[stream] Zen fetch failed:", err);
+    return [];
+  }
+}
+
+// ✅ Build Koto (megaplay.buzz) source — just a URL, no fetch needed
+function getKotoSource(
+  anilistId: number,
+  episode: number,
+  mode: "sub" | "dub",
+) {
+  return {
+    url: `https://megaplay.buzz/stream/ani/${anilistId}/${episode}/${mode}`,
+    type: "iframe" as const,
+    quality: null,
+    sourceName: "Koto",
+    provider: "koto" as const,
+  };
+}
+
+// ✅ Fetch AnimePahe (nekostream) sources — server-side to bypass CORS
+async function fetchPaheSourcesServerSide(
+  malId: number | null,
+  episode: number,
+): Promise<Array<{ url: string; type: "mp4"; quality: string | null; sourceName: string; provider: string }>> {
+  if (!malId) return [];
+
+  try {
+    const ts = Math.floor(Date.now() / 1000);
+    const res = await fetch(
+      `https://mapper.nekostream.site/api/mal/${malId}/${episode}/${ts}`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
+          Accept: "application/json",
+          Referer: "https://animex.one/",
+        },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+
+    const sources: Array<{ url: string; type: "mp4"; quality: string | null; sourceName: string; provider: string }> = [];
+    for (const [providerKey, value] of Object.entries(json)) {
+      if (providerKey === "status") continue;
+      if (value && typeof value === "object") {
+        for (const [quality, urlVal] of Object.entries(value as Record<string, unknown>)) {
+          if (typeof urlVal === "string" && urlVal.startsWith("http")) {
+            const finalUrl = urlVal.replace(
+              "https://pahe.nekostream.site/",
+              "https://proud-dew-d754.download992.workers.dev/",
+            );
+            sources.push({
+              url: finalUrl,
+              type: "mp4",
+              quality: quality || null,
+              sourceName: `Pahe-${providerKey}`,
+              provider: "pahe",
+            });
+          }
+        }
+      }
+    }
+    return sources;
+  } catch (err) {
+    console.warn("[stream] Pahe fetch failed:", err);
+    return [];
+  }
 }
 
 export async function GET(
@@ -65,59 +178,62 @@ export async function GET(
   const url = new URL(request.url);
   const title = url.searchParams.get("title") || "";
   const allowDemo = url.searchParams.get("allowDemo") === "true";
+  const malIdParam = url.searchParams.get("malId");
+  const malId = malIdParam ? parseInt(malIdParam, 10) : null;
   // ✅ Sub/Dub switching: accept type=sub|dub, default to sub
   const requestedMode = url.searchParams.get("type") === "dub" ? "dub" : "sub";
 
+  // ─── Collect sources from all providers in parallel ──────────────────
+  // Each provider returns its own sources array; we merge them all.
+  // The client (VideoPlayer) uses providerPriority to pick the first one.
+
+  type UnifiedSource = {
+    url: string;
+    type: "hls" | "mp4" | "iframe";
+    quality: string | null;
+    sourceName: string;
+    headers?: Record<string, string>;
+    provider: string;
+  };
+
+  let allanimeSources: UnifiedSource[] = [];
+  let allanimeFailures: { source: string; reason: string }[] = [];
+  let allanimeMode: "sub" | "dub" | null = null;
+
+  // ─── 1. AllAnime (primary) ───
   if (!allowDemo && title) {
     try {
       const show = await findShowByAniListId(animeId, title);
       if (show) {
-        // ✅ Try requested mode first, then fall back to sub if dub fails
         const modesToTry: ("sub" | "dub")[] =
           requestedMode === "dub" ? ["dub", "sub"] : ["sub"];
-
-        let lastResult: { sources: StreamResult[]; failures: { source: string; reason: string }[] } | null = null;
 
         for (const mode of modesToTry) {
           const result = await extractStreamUrl(show._id, String(episode), mode);
           if (result && result.sources.length > 0) {
-            // ✅ Cap at 8 sources to keep the UI manageable (xancld uses 6)
-            const cappedSources = result.sources.slice(0, 8);
-            const picked = cappedSources[0];
-            if (picked) {
-              return NextResponse.json({
-                stream: streamResultToJSON(picked),
-                sources: cappedSources.map(streamResultToJSON),
-                duration: null,
-                episodeTitle: `Episode ${episode}`,
-                thumbnail: null,
-                provider: "allanime",
-                mode, // ✅ tell the client which mode actually worked
-                failures: result.failures,
-                // ✅ If we fell back from dub to sub, tell the client
-                ...(requestedMode === "dub" && mode === "sub"
-                  ? { fallbackMode: "dub unavailable, fell back to sub" }
-                  : {}),
-              });
-            }
+            allanimeSources = result.sources.slice(0, 8).map(streamResultToJSON);
+            allanimeFailures = result.failures;
+            allanimeMode = mode;
+            break;
           }
-          if (result) lastResult = result;
+          if (result) allanimeFailures = result.failures;
         }
 
-        // ✅ If we got here, both modes failed but AllAnime found the show.
-        // Check if the episode is released yet.
-        const sub = show.availableEpisodes?.sub ?? 0;
-        if (episode > sub) {
-          return NextResponse.json({
-            stream: null,
-            sources: [],
-            duration: null,
-            episodeTitle: `Episode ${episode}`,
-            thumbnail: null,
-            provider: "allanime",
-            error: `Episode ${episode} hasn't been released yet. Only ${sub} episode(s) available.`,
-            failures: lastResult?.failures ?? [],
-          });
+        // Check if episode is released
+        if (allanimeSources.length === 0) {
+          const sub = show.availableEpisodes?.sub ?? 0;
+          if (episode > sub) {
+            return NextResponse.json({
+              stream: null,
+              sources: [],
+              duration: null,
+              episodeTitle: `Episode ${episode}`,
+              thumbnail: null,
+              provider: "allanime",
+              error: `Episode ${episode} hasn't been released yet. Only ${sub} episode(s) available.`,
+              failures: allanimeFailures,
+            });
+          }
         }
       }
     } catch (err) {
@@ -125,13 +241,49 @@ export async function GET(
     }
   }
 
+  // ─── 2. Zen, Koto, Pahe (in parallel, non-blocking) ───
+  const [zenSources, paheSources] = await Promise.all([
+    fetchZenSourcesServerSide(animeId, episode),
+    fetchPaheSourcesServerSide(malId, episode),
+  ]);
+
+  // Koto is just a URL builder — no fetch needed
+  const kotoSource = getKotoSource(animeId, episode, requestedMode);
+
+  // ─── 3. Merge all sources ───
+  const mergedSources: UnifiedSource[] = [
+    ...allanimeSources,
+    ...zenSources,
+    kotoSource,
+    ...paheSources,
+  ];
+
+  // ─── 4. Return the merged response ───
+  if (mergedSources.length > 0) {
+    const picked = mergedSources[0];
+    return NextResponse.json({
+      stream: picked,
+      sources: mergedSources,
+      duration: null,
+      episodeTitle: `Episode ${episode}`,
+      thumbnail: null,
+      provider: picked.provider,
+      // ✅ If AllAnime fell back from dub to sub
+      ...(requestedMode === "dub" && allanimeMode === "sub"
+        ? { fallbackMode: "dub unavailable, fell back to sub" }
+        : {}),
+      failures: allanimeFailures,
+    });
+  }
+
+  // ─── 5. Fallback to Consumet if configured ───
   const cfg = getConsumetConfig();
   if (cfg.configured) {
     const stream = await fetchConsumetStream(animeId, episode);
     if (stream) {
       return NextResponse.json({
-        stream: { url: stream.url, type: stream.type, quality: stream.quality },
-        sources: [{ ...stream }],
+        stream: { url: stream.url, type: stream.type, quality: stream.quality, provider: "consumet" },
+        sources: [{ ...stream, provider: "consumet" }],
         duration: null,
         episodeTitle: `Episode ${episode}`,
         thumbnail: null,
@@ -140,8 +292,10 @@ export async function GET(
     }
   }
 
+  // ─── 6. All providers failed — return demo ───
   const reasons: string[] = [];
-  if (title) reasons.push("AllAnime stream extraction returned no playable sources");
+  if (title) reasons.push("AllAnime returned no playable sources");
+  reasons.push("Zen/Koto/Pahe returned no sources");
   if (!cfg.configured) reasons.push("CONSUMET_URL not set");
   else reasons.push("Consumet returned no sources");
 
