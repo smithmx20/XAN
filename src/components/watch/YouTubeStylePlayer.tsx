@@ -281,6 +281,9 @@ export function YouTubeStylePlayer({
   // ✅ Track which tier we've already logged for this stream — prevents
   // duplicate analytics events when the player retries within the same load.
   const tierLoggedRef = useRef<string | null>(null);
+  // ✅ Ref to fireTierResolved — kept in sync by the stream-loading effect,
+  // so the iframe render branch (which is outside the effect) can call it.
+  const fireTierResolvedRef = useRef<(tier: "direct" | "manifest-proxy" | "cf-proxy" | "full-proxy" | "failed") => void>(() => {});
 
   // Playback state
   const [loading, setLoading] = useState(true);
@@ -329,6 +332,16 @@ export function YouTubeStylePlayer({
   // Stream loader — 3-tier smart loader (direct → manifest-proxy → full-proxy)
   // ──────────────────────────────────────────────────────────────
   useEffect(() => {
+    // ✅ iframe sources render an <iframe> (not a <video>) — skip the cascade
+    // entirely. The iframe's onLoad handler fires the tier-resolved event.
+    if (streamType === "iframe") {
+      setLoading(true);
+      setError(null);
+      tierLoggedRef.current = null;
+      setLoadMode("direct");
+      return;
+    }
+
     const video = videoRef.current;
     if (!video) return;
 
@@ -360,6 +373,8 @@ export function YouTubeStylePlayer({
       tierLoggedRef.current = tier;
       onTierResolvedRef.current?.(tier);
     };
+    // ✅ Keep the ref in sync so the iframe render branch can call it
+    fireTierResolvedRef.current = fireTierResolved;
 
     // ── Helper: try to load a specific tier's URL ──
     const tryLoadTier = (tierIdx: number) => {
@@ -1064,6 +1079,75 @@ export function YouTubeStylePlayer({
         <AlertCircle className="h-10 w-10 text-xan-crimson mb-3" />
         <p className="text-foreground font-medium">Playback Error</p>
         <p className="text-sm text-muted-foreground mt-1 max-w-md">{error}</p>
+      </div>
+    );
+  }
+
+  // ✅ iframe-type sources (Ok.ru, Uni, etc.) — render an <iframe> instead of
+  // a <video> element. These sources return HTML embed pages (not direct video
+  // URLs), so they need the provider's own JS player to render.
+  //
+  // The iframe loads the provider's embed page directly. The provider's JS
+  // handles all playback, controls, ads, etc. inside the iframe.
+  //
+  // Trade-off: we lose our custom YouTube-style player UI for these sources,
+  // but they work reliably (no Referer/Origin issues, no proxy needed).
+  // Bandwidth: 0 Vercel bytes — the iframe loads directly from the provider.
+  if (streamType === "iframe") {
+    return (
+      <div
+        ref={containerRef}
+        className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border select-none"
+      >
+        <iframe
+          src={streamUrl}
+          className="w-full h-full"
+          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+          allowFullScreen
+          referrerPolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin allow-presentation allow-forms allow-popups"
+          title={title}
+          onLoad={() => {
+            setLoading(false);
+            // ✅ Fire tier resolved as "direct" — iframe loads directly, 0 Vercel BW
+            fireTierResolvedRef.current?.("direct");
+            onLoadedCallbackRef.current?.();
+          }}
+        />
+        {/* Loading spinner while iframe loads */}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black pointer-events-none">
+            <div className="w-12 h-12 rounded-full border-4 border-white/20 border-t-xan-crimson animate-xan-spinner" />
+          </div>
+        )}
+        {/* Top gradient with title + source badge — minimal UI for iframe mode */}
+        <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 pointer-events-none">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-white font-semibold text-sm md:text-base truncate drop-shadow">
+                {title}
+              </p>
+              {mode && (
+                <span className="inline-block mt-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-white/15 text-white">
+                  {mode === "dub" ? "DUB" : "SUB"}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/15 text-white font-medium">
+                {sourceName ?? "IFRAME"}
+              </span>
+              {/* Bandwidth badge for iframe — always DIRECT (0 Vercel BW) */}
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300 border border-emerald-400/30"
+                title="Iframe embed — 0 Vercel bandwidth. Provider's own player handles playback."
+              >
+                <Zap className="h-2.5 w-2.5" />
+                DIRECT
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
