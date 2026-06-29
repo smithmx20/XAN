@@ -39,10 +39,30 @@ interface SourceSwitcherProps {
 // ✅ CF Worker URL — read once at module load (same pattern as YouTubeStylePlayer)
 const CF_WORKER_URL = process.env.NEXT_PUBLIC_CF_WORKER_URL ?? "";
 
+// ✅ Hosts that are known to BLOCK Cloudflare Worker IPs.
+// When the CF Worker fetches these, they return 403/404, so the player
+// falls back to full-proxy (Vercel). The tier preview badge must reflect
+// this — show PROXIED instead of CF for these hosts.
+const CF_BLOCKING_HOSTS = [
+  "tools.fast4speed.rsvp",
+  "mp4upload.com",
+];
+
+function isCFBlocking(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return CF_BLOCKING_HOSTS.some(
+      (h) => u.hostname === h || u.hostname.endsWith(`.${h}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Predict which bandwidth tier a source would land on, based on its type
- * and whether it needs headers. This is a PREVIEW — the actual tier is only
- * known after playback starts (the player may auto-fallback).
+ * Predict which bandwidth tier a source would land on, based on its type,
+ * whether it needs headers, and whether the host blocks CF Worker IPs.
+ * This is a PREVIEW — the actual tier is only known after playback starts.
  */
 function predictTier(
   source: SourceItem,
@@ -59,9 +79,10 @@ function predictTier(
   if (source.type === "hls") return "manifest-proxy";
 
   // MP4/DASH with headers:
-  //   - If CF Worker is configured → cf-proxy (0 Vercel BW)
+  //   - If host is known to block CF → full-proxy (CF will fail, fallback to Vercel)
+  //   - If CF Worker is configured AND host doesn't block CF → cf-proxy (0 Vercel BW)
   //   - Else → full-proxy (uses Vercel BW)
-  if (CF_WORKER_URL) return "cf-proxy";
+  if (CF_WORKER_URL && !isCFBlocking(source.url)) return "cf-proxy";
   return "full-proxy";
 }
 
@@ -183,6 +204,7 @@ export function SourceSwitcher({
       : providerId === "zen" ? "Zen"
       : providerId === "koto" ? "Koto"
       : providerId === "pahe" ? "AnimePahe"
+      : providerId === "gogoanime" ? "Gogoanime"
       : providerId.charAt(0).toUpperCase() + providerId.slice(1),
     sources: sources.map((s, idx) => ({ s, idx })).filter(({ s }) => (s.provider ?? "allanime") === providerId),
   })).filter((g) => g.sources.length > 0);

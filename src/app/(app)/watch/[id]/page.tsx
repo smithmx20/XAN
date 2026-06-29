@@ -110,6 +110,7 @@ function WatchPageInner({ params }: PageProps) {
           : id === "zen" ? "Zen"
           : id === "koto" ? "Koto"
           : id === "pahe" ? "AnimePahe"
+          : id === "gogoanime" ? "Gogoanime"
           : id.charAt(0).toUpperCase() + id.slice(1),
         priority: priority.indexOf(id) === -1 ? 999 : priority.indexOf(id),
       }))

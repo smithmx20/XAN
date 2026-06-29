@@ -81,7 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultAudioMode: "sub",
   bandwidthMode: "auto",
   showSourceSwitcher: true,
-  providerPriority: ["allanime", "zen", "koto", "pahe"],
+  providerPriority: ["allanime", "zen", "koto", "pahe", "gogoanime"],
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",

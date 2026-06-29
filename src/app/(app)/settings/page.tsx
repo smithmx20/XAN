@@ -523,12 +523,14 @@ export default function SettingsPage() {
                   const info = providerId === "allanime"
                     ? { name: "AllAnime", desc: "Primary — Yt-mp4, Mp4, StreamWish, Ok.ru" }
                     : providerId === "zen"
-                      ? { name: "Zen", desc: "FlixCloud HLS embed" }
+                      ? { name: "Zen", desc: "FlixCloud HLS embed (often blocked)" }
                       : providerId === "koto"
                         ? { name: "Koto", desc: "MegaPlay iframe embed" }
                         : providerId === "pahe"
                           ? { name: "AnimePahe", desc: "nekostream MP4 downloads" }
-                          : { name: providerId, desc: "" };
+                          : providerId === "gogoanime"
+                            ? { name: "Gogoanime", desc: "HLS/MP4 scraped from gogoanime.fi" }
+                            : { name: providerId, desc: "" };
 
                   return (
                     <div
@@ -581,7 +583,7 @@ export default function SettingsPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => update("providerPriority", ["allanime", "zen", "koto", "pahe"])}
+                onClick={() => update("providerPriority", ["allanime", "zen", "koto", "pahe", "gogoanime"])}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
                 <RotateCcw className="h-3 w-3 mr-1" />

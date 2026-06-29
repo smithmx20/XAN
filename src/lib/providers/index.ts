@@ -4,9 +4,10 @@
 
 export type ProviderId =
   | "allanime" // Our existing AllAnime extractor (Yt-mp4, Mp4, Sw, Ok, etc.)
-  | "zen" // flixcloud.cc — HLS embed
+  | "zen" // flixcloud.cc — HLS embed (often blocked by Cloudflare)
   | "koto" // megaplay.buzz — iframe embed
-  | "pahe"; // nekostream — MP4 downloads
+  | "pahe" // nekostream — MP4 downloads
+  | "gogoanime"; // gogoanime.fi — HLS/MP4 scraping
 
 export interface ProviderInfo {
   id: ProviderId;
@@ -56,6 +57,14 @@ export const PROVIDERS: ProviderInfo[] = [
     supportsSub: true,
     supportsDub: false,
     defaultPriority: 60,
+  },
+  {
+    id: "gogoanime",
+    name: "Gogoanime",
+    description: "Gogoanime — HLS/MP4 streams scraped from gogoanime.fi. Tries multiple domains. Good fallback.",
+    supportsSub: true,
+    supportsDub: true,
+    defaultPriority: 50,
   },
 ];
 

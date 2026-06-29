@@ -110,9 +110,11 @@ function getKotoSource(
 }
 
 // ✅ Fetch AnimePahe (nekostream) sources — server-side to bypass CORS
+// Response structure: {provider: {sub: {download: {quality: url}}, dub: {download: {quality: url}}}, status: {...}}
 async function fetchPaheSourcesServerSide(
   malId: number | null,
   episode: number,
+  requestedMode: "sub" | "dub",
 ): Promise<Array<{ url: string; type: "mp4"; quality: string | null; sourceName: string; provider: string }>> {
   if (!malId) return [];
 
@@ -135,8 +137,39 @@ async function fetchPaheSourcesServerSide(
     const sources: Array<{ url: string; type: "mp4"; quality: string | null; sourceName: string; provider: string }> = [];
     for (const [providerKey, value] of Object.entries(json)) {
       if (providerKey === "status") continue;
-      if (value && typeof value === "object") {
-        for (const [quality, urlVal] of Object.entries(value as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+
+      const providerObj = value as Record<string, unknown>;
+
+      // ✅ New structure: {provider: {sub: {download: {quality: url}}, dub: {download: {quality: url}}}}
+      // Try the sub/dub nested structure first
+      const modeData = providerObj[requestedMode] as Record<string, unknown> | undefined;
+      if (modeData && typeof modeData === "object") {
+        // modeData = {download: {quality: url}}
+        for (const [downloadType, qualityObj] of Object.entries(modeData)) {
+          if (qualityObj && typeof qualityObj === "object") {
+            for (const [quality, urlVal] of Object.entries(qualityObj as Record<string, unknown>)) {
+              if (typeof urlVal === "string" && urlVal.startsWith("http")) {
+                const finalUrl = urlVal.replace(
+                  "https://pahe.nekostream.site/",
+                  "https://proud-dew-d754.download992.workers.dev/",
+                );
+                sources.push({
+                  url: finalUrl,
+                  type: "mp4",
+                  quality: quality || downloadType || null,
+                  sourceName: `Pahe-${providerKey}`,
+                  provider: "pahe",
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // ✅ Fallback: old flat structure {provider: {quality: url}}
+      if (sources.length === 0) {
+        for (const [quality, urlVal] of Object.entries(providerObj)) {
           if (typeof urlVal === "string" && urlVal.startsWith("http")) {
             const finalUrl = urlVal.replace(
               "https://pahe.nekostream.site/",
@@ -158,6 +191,115 @@ async function fetchPaheSourcesServerSide(
     console.warn("[stream] Pahe fetch failed:", err);
     return [];
   }
+}
+
+// ✅ Fetch Gogoanime sources — server-side scraping (bypasses CORS + Cloudflare)
+// Tries multiple gogoanime domains, searches by title, extracts stream URL
+async function fetchGogoanimeSourcesServerSide(
+  title: string,
+  episode: number,
+): Promise<Array<{ url: string; type: "hls" | "mp4"; quality: string | null; sourceName: string; provider: string; headers?: Record<string, string> }>> {
+  if (!title.trim()) return [];
+
+  const GOGO_DOMAINS = ["https://gogoanime.fi", "https://gogoanime.vc", "https://gogoanime.dk"];
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  const FETCH_HEADERS = {
+    "User-Agent": UA,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+
+  for (const baseUrl of GOGO_DOMAINS) {
+    try {
+      // Step 1: Search for the anime
+      const searchUrl = `${baseUrl}/search.html?keyword=${encodeURIComponent(title)}`;
+      const searchRes = await fetch(searchUrl, {
+        headers: { ...FETCH_HEADERS, Referer: `${baseUrl}/` },
+        redirect: "follow",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!searchRes.ok) continue;
+      const searchHtml = await searchRes.text();
+
+      // Find the first anime category link
+      const categoryMatch = searchHtml.match(/href="([^"]*\/category\/[^"]+)"/);
+      if (!categoryMatch || !categoryMatch[1]) continue;
+      const categoryUrl = categoryMatch[1].startsWith("http")
+        ? categoryMatch[1]
+        : `${baseUrl}${categoryMatch[1]}`;
+
+      // Step 2: Build the episode URL from the category slug
+      const slugMatch = categoryUrl.match(/\/category\/(.+)$/);
+      if (!slugMatch || !slugMatch[1]) continue;
+      const slug = slugMatch[1];
+      const epUrl = `${baseUrl}/${slug}-episode-${episode}`;
+
+      // Step 3: Fetch the episode page
+      const epRes = await fetch(epUrl, {
+        headers: { ...FETCH_HEADERS, Referer: categoryUrl },
+        redirect: "follow",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!epRes.ok) continue;
+      const epHtml = await epRes.text();
+
+      // Step 4: Find the iframe embed URL
+      const iframeMatch = epHtml.match(/<iframe[^>]*src="([^"]+)"/);
+      if (!iframeMatch || !iframeMatch[1]) continue;
+      const embedUrl = iframeMatch[1].startsWith("http")
+        ? iframeMatch[1]
+        : `https:${iframeMatch[1]}`;
+
+      // Step 5: Fetch the embed page to get the actual stream URL
+      const embedRes = await fetch(embedUrl, {
+        headers: { ...FETCH_HEADERS, Referer: epUrl },
+        redirect: "follow",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!embedRes.ok) continue;
+      const embedHtml = await embedRes.text();
+
+      // Step 6: Extract stream URLs (HLS .m3u8 or MP4)
+      const sources: Array<{ url: string; type: "hls" | "mp4"; quality: string | null; sourceName: string; provider: string; headers?: Record<string, string> }> = [];
+
+      // Look for HLS sources
+      const hlsMatches = embedHtml.matchAll(/(?:file|src)\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/g);
+      for (const m of hlsMatches) {
+        if (m[1]) {
+          sources.push({
+            url: m[1],
+            type: "hls",
+            quality: "Auto",
+            sourceName: "Gogoanime",
+            provider: "gogoanime",
+            headers: { Referer: embedUrl },
+          });
+        }
+      }
+
+      // Look for MP4 sources
+      const mp4Matches = embedHtml.matchAll(/(?:file|src)\s*[:=]\s*["']([^"']+\.mp4[^"']*)["']/g);
+      for (const m of mp4Matches) {
+        if (m[1]) {
+          sources.push({
+            url: m[1],
+            type: "mp4",
+            quality: "Auto",
+            sourceName: "Gogoanime",
+            provider: "gogoanime",
+            headers: { Referer: embedUrl },
+          });
+        }
+      }
+
+      if (sources.length > 0) return sources;
+    } catch {
+      // Try next domain
+      continue;
+    }
+  }
+
+  return [];
 }
 
 export async function GET(
@@ -241,10 +383,11 @@ export async function GET(
     }
   }
 
-  // ─── 2. Zen, Koto, Pahe (in parallel, non-blocking) ───
-  const [zenSources, paheSources] = await Promise.all([
+  // ─── 2. Zen, Koto, Pahe, Gogoanime (in parallel, non-blocking) ───
+  const [zenSources, paheSources, gogoSources] = await Promise.all([
     fetchZenSourcesServerSide(animeId, episode),
-    fetchPaheSourcesServerSide(malId, episode),
+    fetchPaheSourcesServerSide(malId, episode, requestedMode),
+    fetchGogoanimeSourcesServerSide(title, episode),
   ]);
 
   // Koto is just a URL builder — no fetch needed
@@ -256,6 +399,7 @@ export async function GET(
     ...zenSources,
     kotoSource,
     ...paheSources,
+    ...gogoSources,
   ];
 
   // ─── 4. Return the merged response ───
