@@ -362,6 +362,19 @@ export function YouTubeStylePlayer({
   // Tier index for the current load attempt (advances on failure)
   const tierIdxRef = useRef(0);
 
+  // ✅ Bug fix: Refs for the values used in scheduleHide's timeout callback.
+  // These prevent stale closures — the timeout always reads the LATEST values,
+  // so the controls won't auto-hide while a menu (settings/shortcuts) is open
+  // even if the timer was scheduled before the menu opened.
+  const playingRef = useRef(playing);
+  const showSettingsRef = useRef(showSettings);
+  const showShortcutsRef = useRef(showShortcuts);
+  useEffect(() => {
+    playingRef.current = playing;
+    showSettingsRef.current = showSettings;
+    showShortcutsRef.current = showShortcuts;
+  }, [playing, showSettings, showShortcuts]);
+
   // Keep ref callbacks in sync without re-running the stream-loading effect
   useEffect(() => {
     onEpisodeEndRef.current = onEpisodeEnd;
@@ -817,13 +830,17 @@ export function YouTubeStylePlayer({
       clearTimeout(hideTimerRef.current);
     }
     hideTimerRef.current = setTimeout(() => {
-      // Only auto-hide when actually playing AND no menu is open
+      // Only auto-hide when actually playing AND no menu is open.
+      // ✅ Bug fix: Read from refs (not closure) so we always see the latest
+      // values — prevents stale closure from hiding controls while a menu
+      // is open (which would make the settings panel disappear/become
+      // unclickable until the user moved the mouse again).
       setControlsVisible((visible) => {
-        if (!playing || showSettings || showShortcuts) return visible;
+        if (!playingRef.current || showSettingsRef.current || showShortcutsRef.current) return visible;
         return false;
       });
     }, 3000);
-  }, [playing, showSettings, showShortcuts]);
+  }, []);
 
   const onContainerMouseMove = useCallback(() => {
     showControls();
@@ -831,14 +848,16 @@ export function YouTubeStylePlayer({
   }, [showControls, scheduleHide]);
 
   const onContainerMouseLeave = useCallback(() => {
-    if (playing && !showSettings && !showShortcuts) {
+    // ✅ Bug fix: Read from refs so we never hide controls due to a stale
+    // closure when a menu is actually open.
+    if (playingRef.current && !showSettingsRef.current && !showShortcutsRef.current) {
       setControlsVisible(false);
     }
     if (hideTimerRef.current) {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
-  }, [playing, showSettings, showShortcuts]);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -984,7 +1003,10 @@ export function YouTubeStylePlayer({
           setShowShortcuts((v) => !v);
           break;
         case "Escape":
+          // ✅ Bug fix: preventDefault so Escape doesn't also exit fullscreen
+          // when it's only meant to close the settings panel.
           if (showSettings) {
+            e.preventDefault();
             setShowSettings(false);
             setSettingsTab("main");
           }
@@ -1138,7 +1160,12 @@ export function YouTubeStylePlayer({
     progress < skipIntroOffset + 30 &&
     duration > skipIntroOffset + 10;
 
-  const controlsClass = `xan-controls ${controlsVisible ? "" : "xan-controls--hidden"}`;
+  // ✅ Bug fix: Keep controls visible while settings/shortcuts panel is open.
+  // Prevents the panel from inheriting `pointer-events: none` and `opacity: 0`
+  // from `xan-controls--hidden` if controlsVisible ever becomes false while
+  // a menu is open (e.g., due to auto-hide timer race conditions).
+  const controlsHidden = !controlsVisible && !showSettings && !showShortcuts;
+  const controlsClass = `xan-controls ${controlsHidden ? "xan-controls--hidden" : ""}`;
 
   // ──────────────────────────────────────────────────────────────
   // Render
@@ -1282,7 +1309,7 @@ export function YouTubeStylePlayer({
 
       {/* ── Top gradient with title ── */}
       <div
-        className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 xan-controls ${controlsVisible ? "" : "xan-controls--hidden"}`}
+        className={`absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 xan-controls ${controlsHidden ? "xan-controls--hidden" : ""}`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -1362,8 +1389,14 @@ export function YouTubeStylePlayer({
       )}
 
       {/* ── Bottom controls bar ── */}
+      {/* ✅ Bug fix: Removed `overflow-x-hidden` — per CSS spec, `overflow-x: hidden`
+          computes `overflow-y` to `auto`, which created a vertical scroll container
+          that clipped the settings panel (positioned `bottom-full` above the gear
+          button). The panel was being cut off, making most of its buttons
+          invisible and unclickable. The buttons row already uses `flex-wrap`
+          to handle horizontal overflow, so `overflow-x-hidden` is not needed. */}
       <div
-        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-2 sm:px-3 pb-1.5 sm:pb-2 pt-10 overflow-x-hidden ${controlsClass}`}
+        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-2 sm:px-3 pb-1.5 sm:pb-2 pt-10 ${controlsClass}`}
       >
         {/* Seekbar */}
         <div
@@ -1522,7 +1555,7 @@ export function YouTubeStylePlayer({
               {showSettings && (
                 <div
                   data-settings-panel
-                  className="absolute bottom-full right-0 mb-2 w-64 max-w-[calc(100vw-0.5rem)] max-h-[60vh] z-40 rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-y-auto overflow-x-hidden animate-panel-up"
+                  className="absolute bottom-full right-0 mb-2 w-64 max-w-[calc(100vw-0.5rem)] max-h-[60vh] z-50 rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-y-auto overflow-x-hidden animate-panel-up pointer-events-auto"
                   onClick={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
