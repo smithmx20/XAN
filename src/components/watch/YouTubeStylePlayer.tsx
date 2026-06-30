@@ -1522,8 +1522,9 @@ export function YouTubeStylePlayer({
               {showSettings && (
                 <div
                   data-settings-panel
-                  className="absolute bottom-full right-0 mb-2 w-60 rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-hidden animate-panel-up"
+                  className="absolute bottom-full right-0 mb-2 w-56 max-w-[calc(100vw-1rem)] rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-hidden animate-panel-up"
                   onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
                 >
                   {settingsTab === "main" && (
                     <>
@@ -1533,7 +1534,7 @@ export function YouTubeStylePlayer({
                       >
                         <span>Playback speed</span>
                         <span className="flex items-center gap-1.5 text-white/70">
-                          {playbackRate}x
+                          {Number.isInteger(playbackRate) ? playbackRate : playbackRate.toFixed(2)}x
                           <ChevronRight className="h-4 w-4" />
                         </span>
                       </button>
@@ -1564,23 +1565,44 @@ export function YouTubeStylePlayer({
                         </button>
                         <span className="font-medium">Playback speed</span>
                       </div>
-                      {/* ✅ Fine-grained speed slider (0.25x – 4x) */}
+                      {/* ✅ Fine-grained speed slider (0.25x – 4x) with visible track */}
                       <div className="px-4 py-3 border-b border-white/5">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs text-white/60">Speed</span>
-                          <span className="text-xs font-mono font-bold text-xan-crimson">{playbackRate.toFixed(2)}x</span>
+                          <span className="text-xs font-mono font-bold text-xan-crimson">
+                            {Number.isInteger(playbackRate) ? `${playbackRate}.00` : playbackRate.toFixed(2)}x
+                          </span>
                         </div>
-                        <input
-                          type="range"
-                          min={0.25}
-                          max={4}
-                          step={0.05}
-                          value={playbackRate}
-                          onChange={(e) => changeRate(Number(e.target.value))}
-                          onClick={(e) => e.stopPropagation()}
-                          className="xan-vol w-full"
-                          aria-label="Playback speed slider"
-                        />
+                        {/* Custom slider with visible track + fill */}
+                        <div className="relative h-4 flex items-center">
+                          {/* Track background */}
+                          <div className="absolute left-0 right-0 h-1 rounded-full bg-white/25" />
+                          {/* Fill */}
+                          <div
+                            className="absolute left-0 h-1 rounded-full bg-xan-crimson transition-all"
+                            style={{ width: `${((playbackRate - 0.25) / (4 - 0.25)) * 100}%` }}
+                          />
+                          {/* Thumb */}
+                          <div
+                            className="absolute w-3 h-3 rounded-full bg-white shadow-sm pointer-events-none"
+                            style={{ left: `calc(${((playbackRate - 0.25) / (4 - 0.25)) * 100}% - 6px)` }}
+                          />
+                          {/* Hidden native input on top */}
+                          <input
+                            type="range"
+                            min={0.25}
+                            max={4}
+                            step={0.05}
+                            value={playbackRate}
+                            onChange={(e) => changeRate(Number(e.target.value))}
+                            onClick={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onTouchStart={(e) => e.stopPropagation()}
+                            className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                            aria-label="Playback speed slider"
+                            style={{ WebkitAppearance: "none", appearance: "none", background: "transparent" }}
+                          />
+                        </div>
                         <div className="flex justify-between text-[9px] text-white/30 mt-1">
                           <span>0.25x</span>
                           <span>1x</span>
@@ -1588,14 +1610,11 @@ export function YouTubeStylePlayer({
                           <span>4x</span>
                         </div>
                       </div>
-                      {/* Preset buttons */}
+                      {/* Preset buttons — don't close panel, just update speed */}
                       {PLAYBACK_RATES.map((rate) => (
                         <button
                           key={rate}
-                          onClick={() => {
-                            changeRate(rate);
-                            setSettingsTab("main");
-                          }}
+                          onClick={() => changeRate(rate)}
                           className="flex items-center justify-between w-full px-4 py-2 hover:bg-white/10 transition-colors"
                         >
                           <span>{rate}x{rate === 1 ? " (Normal)" : ""}</span>
