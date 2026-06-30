@@ -1267,17 +1267,6 @@ export function YouTubeStylePlayer({
         </div>
       )}
 
-      {/* Skip Intro button */}
-      {showSkipIntro && (
-        <button
-          onClick={skipIntro}
-          className={`absolute bottom-24 right-4 z-20 inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-xan-crimson/90 hover:bg-xan-crimson text-white text-sm font-semibold shadow-lg transition-all hover:scale-105 ${controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-        >
-          <SkipForward className="h-4 w-4" />
-          Skip Intro
-        </button>
-      )}
-
       {/* Seek feedback overlay (when pressing J/L/arrows) */}
       {seekFeedback && (
         <div
@@ -1469,27 +1458,41 @@ export function YouTubeStylePlayer({
               <RotateCw className="h-4 w-4" />
             </button>
 
-            {/* Volume — always visible slider (not hover-expand) */}
-            <div className="flex items-center gap-1">
+            {/* ✅ Volume — redesigned with visible track + fill (like the seekbar) */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
                 onClick={toggleMute}
-                className="p-1.5 rounded hover:bg-white/15 transition-colors flex-shrink-0"
+                className="p-1.5 rounded hover:bg-white/15 transition-colors"
                 aria-label={muted ? "Unmute" : "Mute"}
                 title={muted ? "Unmute (M)" : "Mute (M)"}
               >
                 <VolumeIcon className="h-5 w-5" />
               </button>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={muted ? 0 : volume}
-                onChange={(e) => changeVolume(Number(e.target.value))}
-                onClick={(e) => e.stopPropagation()}
-                className="xan-vol w-14 flex-shrink-0"
-                aria-label="Volume"
-              />
+              {/* Custom volume slider with visible track + fill + thumb */}
+              <div className="relative w-14 h-3 flex items-center group/vol-slider">
+                <div className="absolute left-0 right-0 h-1 rounded-full bg-white/25" />
+                <div
+                  className="absolute left-0 h-1 rounded-full bg-white transition-all"
+                  style={{ width: `${(muted ? 0 : volume) * 100}%` }}
+                />
+                <div
+                  className="absolute w-2.5 h-2.5 rounded-full bg-white shadow-sm opacity-0 group-hover/vol-slider:opacity-100 transition-opacity pointer-events-none"
+                  style={{ left: `calc(${(muted ? 0 : volume) * 100}% - 5px)` }}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={muted ? 0 : volume}
+                  onChange={(e) => changeVolume(Number(e.target.value))}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                  aria-label="Volume"
+                  style={{ WebkitAppearance: "none", appearance: "none", background: "transparent" }}
+                />
+              </div>
             </div>
 
             {/* Time display (click to toggle duration ↔ remaining) */}
@@ -1504,6 +1507,19 @@ export function YouTubeStylePlayer({
 
           {/* Right cluster */}
           <div className="flex items-center gap-1.5">
+            {/* ✅ Skip Intro — permanent button alongside Loop (visible during intro window) */}
+            {showSkipIntro && (
+              <button
+                onClick={skipIntro}
+                className="p-1.5 rounded bg-xan-crimson/20 hover:bg-xan-crimson/40 text-xan-crimson transition-colors flex items-center gap-1"
+                aria-label="Skip intro"
+                title={`Skip intro (${skipIntroOffset}s)`}
+              >
+                <SkipForward className="h-4 w-4" />
+                <span className="text-[10px] font-bold hidden sm:inline">SKIP</span>
+              </button>
+            )}
+
             {/* Loop toggle */}
             <button
               onClick={() => setLoop((v) => !v)}
