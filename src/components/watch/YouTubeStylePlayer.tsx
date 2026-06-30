@@ -495,6 +495,20 @@ export function YouTubeStylePlayer({
 
           hls.on(Hls.Events.ERROR, (_evt, data) => {
             if (cancelled) return;
+            // ✅ Bug fix: Recover from non-fatal errors automatically
+            if (!data.fatal) {
+              switch (data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  console.warn(`[player] HLS network error: ${data.details} — recovering`);
+                  hls.startLoad();
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  console.warn(`[player] HLS media error: ${data.details} — recovering`);
+                  hls.recoverMediaError();
+                  break;
+              }
+              return;
+            }
             // ✅ On fatal error, advance to the next tier before giving up.
             // This is what makes the smart loader "auto-fallback":
             //   - Direct fails (CORS/Referer) → try manifest-proxy
@@ -624,7 +638,12 @@ export function YouTubeStylePlayer({
     };
     const onEnterPip = () => setIsPip(true);
     const onLeavePip = () => setIsPip(false);
-    const onWaiting = () => !cancelled && setLoading(true);
+    // ✅ Bug fix: Only show loading spinner when actually stalled (playing but buffering)
+    const onWaiting = () => {
+      if (cancelled) return;
+      if (video.paused) return;
+      setLoading(true);
+    };
     const onCanPlay = () => !cancelled && setLoading(false);
 
     video.addEventListener("loadeddata", onLoaded);
@@ -835,6 +854,27 @@ export function YouTubeStylePlayer({
       showControls();
     }
   }, [playing, scheduleHide, showControls]);
+
+  // ✅ Bug fix: Close settings panel when clicking outside it
+  useEffect(() => {
+    if (!showSettings) return;
+    const handler = (e: MouseEvent) => {
+      // Check if click was outside the settings panel area
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-settings-panel]")) {
+        setShowSettings(false);
+        setSettingsTab("main");
+      }
+    };
+    // Use setTimeout to avoid the click that opened the panel from closing it
+    const timer = setTimeout(() => {
+      document.addEventListener("click", handler);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("click", handler);
+    };
+  }, [showSettings]);
 
   // ──────────────────────────────────────────────────────────────
   // Keyboard shortcuts
@@ -1332,16 +1372,19 @@ export function YouTubeStylePlayer({
       </div>
 
       {/* ── Big center play button (when paused) ── */}
+      {/* ✅ Bug fix: pointer-events-none on overlay, pointer-events-auto on button */}
       {!playing && !loading && (
-        <button
-          onClick={togglePlay}
-          className="absolute inset-0 flex items-center justify-center z-10"
-          aria-label="Play"
-        >
-          <div className="w-20 h-20 rounded-full bg-xan-crimson/90 hover:bg-xan-crimson flex items-center justify-center shadow-xl transition-transform hover:scale-105 animate-play-pop">
-            <Play className="h-9 w-9 text-white fill-white ml-1" />
-          </div>
-        </button>
+        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+          <button
+            onClick={togglePlay}
+            className="pointer-events-auto"
+            aria-label="Play"
+          >
+            <div className="w-20 h-20 rounded-full bg-xan-crimson/90 hover:bg-xan-crimson flex items-center justify-center shadow-xl transition-transform hover:scale-105 animate-play-pop">
+              <Play className="h-9 w-9 text-white fill-white ml-1" />
+            </div>
+          </button>
+        </div>
       )}
 
       {/* ── Bottom controls bar ── */}
@@ -1444,6 +1487,7 @@ export function YouTubeStylePlayer({
                   step={0.05}
                   value={muted ? 0 : volume}
                   onChange={(e) => changeVolume(Number(e.target.value))}
+                  onClick={(e) => e.stopPropagation()}
                   className="xan-vol w-16 ml-1"
                   aria-label="Volume"
                 />
@@ -1483,11 +1527,15 @@ export function YouTubeStylePlayer({
                 aria-label="Settings"
                 title="Settings"
               >
-                <Settings className={`h-5 w-5 ${showSettings ? "animate-spin" : ""}`} style={{ animationDuration: "0.6s" }} />
+                <Settings className="h-5 w-5" />
               </button>
 
               {showSettings && (
-                <div className="absolute bottom-full right-0 mb-2 w-60 rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-hidden animate-panel-up">
+                <div
+                  data-settings-panel
+                  className="absolute bottom-full right-0 mb-2 w-60 rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-hidden animate-panel-up"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {settingsTab === "main" && (
                     <>
                       <button
