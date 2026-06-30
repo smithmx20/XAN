@@ -1522,7 +1522,7 @@ export function YouTubeStylePlayer({
               {showSettings && (
                 <div
                   data-settings-panel
-                  className="absolute bottom-full right-0 mb-2 w-56 max-w-[calc(100vw-1rem)] rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-hidden animate-panel-up"
+                  className="absolute bottom-full right-0 mb-2 w-64 max-w-[calc(100vw-0.5rem)] max-h-[60vh] z-40 rounded-lg bg-[#0f0f0f]/95 backdrop-blur border border-white/10 shadow-2xl text-white text-sm overflow-y-auto overflow-x-hidden animate-panel-up"
                   onClick={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
@@ -1603,7 +1603,7 @@ export function YouTubeStylePlayer({
                             style={{ WebkitAppearance: "none", appearance: "none", background: "transparent" }}
                           />
                         </div>
-                        <div className="flex justify-between text-[9px] text-white/30 mt-1">
+                        <div className="flex justify-between text-[9px] text-white/30 mt-1 px-0.5">
                           <span>0.25x</span>
                           <span>1x</span>
                           <span>2x</span>
@@ -1611,6 +1611,7 @@ export function YouTubeStylePlayer({
                         </div>
                       </div>
                       {/* Preset buttons — don't close panel, just update speed */}
+                      <div className="max-h-[200px] overflow-y-auto">
                       {PLAYBACK_RATES.map((rate) => (
                         <button
                           key={rate}
@@ -1621,6 +1622,7 @@ export function YouTubeStylePlayer({
                           {rate === playbackRate && <Check className="h-4 w-4 text-xan-crimson" />}
                         </button>
                       ))}
+                      </div>
                     </div>
                   )}
 
