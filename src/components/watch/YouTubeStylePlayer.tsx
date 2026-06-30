@@ -744,8 +744,10 @@ export function YouTubeStylePlayer({
   const changeRate = useCallback((rate: number) => {
     const video = videoRef.current;
     if (!video) return;
-    video.playbackRate = rate;
-    setPlaybackRate(rate);
+    // ✅ Clamp to 0.25–4 range (matches the slider bounds)
+    const clampedRate = Math.max(0.25, Math.min(4, rate));
+    video.playbackRate = clampedRate;
+    setPlaybackRate(clampedRate);
   }, []);
 
   const changeQuality = useCallback((levelIndex: number) => {
@@ -859,20 +861,18 @@ export function YouTubeStylePlayer({
   useEffect(() => {
     if (!showSettings) return;
     const handler = (e: MouseEvent) => {
-      // Check if click was outside the settings panel area
       const target = e.target as HTMLElement;
-      if (!target.closest("[data-settings-panel]")) {
+      // Check if click was inside the settings panel OR the settings gear button
+      if (!target.closest("[data-settings-panel]") && !target.closest("[data-settings-button]")) {
         setShowSettings(false);
         setSettingsTab("main");
       }
     };
-    // Use setTimeout to avoid the click that opened the panel from closing it
-    const timer = setTimeout(() => {
-      document.addEventListener("click", handler);
-    }, 0);
+    // Use mousedown instead of click — fires before the click event processes,
+    // and doesn't interfere with the gear button's onClick
+    document.addEventListener("mousedown", handler);
     return () => {
-      clearTimeout(timer);
-      document.removeEventListener("click", handler);
+      document.removeEventListener("mousedown", handler);
     };
   }, [showSettings]);
 
@@ -1469,29 +1469,27 @@ export function YouTubeStylePlayer({
               <RotateCw className="h-4 w-4" />
             </button>
 
-            {/* Volume — expands on hover (YouTube-style) */}
-            <div className="group/vol flex items-center">
+            {/* Volume — always visible slider (not hover-expand) */}
+            <div className="flex items-center gap-1">
               <button
                 onClick={toggleMute}
-                className="p-1.5 rounded hover:bg-white/15 transition-colors"
+                className="p-1.5 rounded hover:bg-white/15 transition-colors flex-shrink-0"
                 aria-label={muted ? "Unmute" : "Mute"}
                 title={muted ? "Unmute (M)" : "Mute (M)"}
               >
                 <VolumeIcon className="h-5 w-5" />
               </button>
-              <div className="w-0 overflow-hidden group-hover/vol:w-16 transition-all duration-200 ease-out">
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={muted ? 0 : volume}
-                  onChange={(e) => changeVolume(Number(e.target.value))}
-                  onClick={(e) => e.stopPropagation()}
-                  className="xan-vol w-16 ml-1"
-                  aria-label="Volume"
-                />
-              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={muted ? 0 : volume}
+                onChange={(e) => changeVolume(Number(e.target.value))}
+                onClick={(e) => e.stopPropagation()}
+                className="xan-vol w-14 flex-shrink-0"
+                aria-label="Volume"
+              />
             </div>
 
             {/* Time display (click to toggle duration ↔ remaining) */}
@@ -1519,6 +1517,7 @@ export function YouTubeStylePlayer({
             {/* Settings (gear) → multi-level panel */}
             <div className="relative">
               <button
+                data-settings-button
                 onClick={() => {
                   setShowSettings((v) => !v);
                   setSettingsTab("main");
@@ -1585,6 +1584,31 @@ export function YouTubeStylePlayer({
                         </button>
                         <span className="font-medium">Playback speed</span>
                       </div>
+                      {/* ✅ Fine-grained speed slider (0.25x – 4x) */}
+                      <div className="px-4 py-3 border-b border-white/5">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs text-white/60">Speed</span>
+                          <span className="text-xs font-mono font-bold text-xan-crimson">{playbackRate.toFixed(2)}x</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0.25}
+                          max={4}
+                          step={0.05}
+                          value={playbackRate}
+                          onChange={(e) => changeRate(Number(e.target.value))}
+                          onClick={(e) => e.stopPropagation()}
+                          className="xan-vol w-full"
+                          aria-label="Playback speed slider"
+                        />
+                        <div className="flex justify-between text-[9px] text-white/30 mt-1">
+                          <span>0.25x</span>
+                          <span>1x</span>
+                          <span>2x</span>
+                          <span>4x</span>
+                        </div>
+                      </div>
+                      {/* Preset buttons */}
                       {PLAYBACK_RATES.map((rate) => (
                         <button
                           key={rate}
