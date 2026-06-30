@@ -192,15 +192,18 @@ async function fetchPaheSourcesServerSide(
   }
 }
 
-// ✅ Fetch Gogoanime sources — server-side scraping (bypasses CORS + Cloudflare)
-// Tries multiple gogoanime domains, searches by title, extracts stream URL
+// ✅ Fetch Gogoanime sources — uses gogoanime.fi as iframe embed
+// gogoanime.fi is a WordPress site (dramastream theme) that loads its player
+// via AJAX — we can't scrape the stream URL server-side. Instead, we find the
+// episode page URL and embed it as an iframe. The user watches on gogoanime's
+// own player. 0 Vercel bandwidth.
 async function fetchGogoanimeSourcesServerSide(
   title: string,
   episode: number,
-): Promise<Array<{ url: string; type: "hls" | "mp4"; quality: string | null; sourceName: string; provider: string; headers?: Record<string, string> }>> {
+): Promise<Array<{ url: string; type: "iframe"; quality: string | null; sourceName: string; provider: string }>> {
   if (!title.trim()) return [];
 
-  const GOGO_DOMAINS = ["https://gogoanime.fi", "https://gogoanime.vc", "https://gogoanime.dk"];
+  const GOGO_DOMAINS = ["https://gogoanime.fi"];
   const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
   const FETCH_HEADERS = {
     "User-Agent": UA,
@@ -210,88 +213,61 @@ async function fetchGogoanimeSourcesServerSide(
 
   for (const baseUrl of GOGO_DOMAINS) {
     try {
-      // Step 1: Search for the anime
-      const searchUrl = `${baseUrl}/search.html?keyword=${encodeURIComponent(title)}`;
-      const searchRes = await fetch(searchUrl, {
+      // Step 1: Fetch the category page (search redirects to home, so we try
+      // building the slug from the title directly)
+      // gogoanime.fi slug format: title-with-hyphens
+      const slug = title.toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+
+      // Step 2: Try the episode URL with "-english-subbed" suffix (gogoanime.fi format)
+      const epUrl = `${baseUrl}/${slug}-episode-${episode}-english-subbed/`;
+      const epRes = await fetch(epUrl, {
         headers: { ...FETCH_HEADERS, Referer: `${baseUrl}/` },
         redirect: "follow",
         signal: AbortSignal.timeout(10_000),
       });
-      if (!searchRes.ok) continue;
-      const searchHtml = await searchRes.text();
 
-      // Find the first anime category link
-      const categoryMatch = searchHtml.match(/href="([^"]*\/category\/[^"]+)"/);
-      if (!categoryMatch || !categoryMatch[1]) continue;
-      const categoryUrl = categoryMatch[1].startsWith("http")
-        ? categoryMatch[1]
-        : `${baseUrl}${categoryMatch[1]}`;
-
-      // Step 2: Build the episode URL from the category slug
-      const slugMatch = categoryUrl.match(/\/category\/(.+)$/);
-      if (!slugMatch || !slugMatch[1]) continue;
-      const slug = slugMatch[1];
-      const epUrl = `${baseUrl}/${slug}-episode-${episode}`;
-
-      // Step 3: Fetch the episode page
-      const epRes = await fetch(epUrl, {
-        headers: { ...FETCH_HEADERS, Referer: categoryUrl },
-        redirect: "follow",
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!epRes.ok) continue;
-      const epHtml = await epRes.text();
-
-      // Step 4: Find the iframe embed URL
-      const iframeMatch = epHtml.match(/<iframe[^>]*src="([^"]+)"/);
-      if (!iframeMatch || !iframeMatch[1]) continue;
-      const embedUrl = iframeMatch[1].startsWith("http")
-        ? iframeMatch[1]
-        : `https:${iframeMatch[1]}`;
-
-      // Step 5: Fetch the embed page to get the actual stream URL
-      const embedRes = await fetch(embedUrl, {
-        headers: { ...FETCH_HEADERS, Referer: epUrl },
-        redirect: "follow",
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!embedRes.ok) continue;
-      const embedHtml = await embedRes.text();
-
-      // Step 6: Extract stream URLs (HLS .m3u8 or MP4)
-      const sources: Array<{ url: string; type: "hls" | "mp4"; quality: string | null; sourceName: string; provider: string; headers?: Record<string, string> }> = [];
-
-      // Look for HLS sources
-      const hlsMatches = embedHtml.matchAll(/(?:file|src)\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/g);
-      for (const m of hlsMatches) {
-        if (m[1]) {
-          sources.push({
-            url: m[1],
-            type: "hls",
-            quality: "Auto",
+      if (epRes.ok) {
+        const epHtml = await epRes.text();
+        // Verify it's a real episode page (not a 404 or redirect)
+        if (epHtml.length > 10000 && epHtml.includes("gogoanime")) {
+          return [{
+            url: epUrl,
+            type: "iframe",
+            quality: null,
             sourceName: "Gogoanime",
             provider: "gogoanime",
-            headers: { Referer: embedUrl },
-          });
+          }];
         }
       }
 
-      // Look for MP4 sources
-      const mp4Matches = embedHtml.matchAll(/(?:file|src)\s*[:=]\s*["']([^"']+\.mp4[^"']*)["']/g);
-      for (const m of mp4Matches) {
-        if (m[1]) {
-          sources.push({
-            url: m[1],
-            type: "mp4",
-            quality: "Auto",
+      // Step 3: If the direct URL didn't work, try searching for the anime
+      // gogoanime.fi search redirects to home page, so we need to use the
+      // category page to find the correct slug
+      const catUrl = `${baseUrl}/category/${slug}`;
+      const catRes = await fetch(catUrl, {
+        headers: { ...FETCH_HEADERS, Referer: `${baseUrl}/` },
+        redirect: "follow",
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (catRes.ok) {
+        const catHtml = await catRes.text();
+        // Look for episode links on the category page
+        const epLinkMatch = catHtml.match(
+          new RegExp(`href="(https://${baseUrl.replace("https://", "")}/[^"]*-episode-${episode}[^"]*)"`)
+        );
+        if (epLinkMatch && epLinkMatch[1]) {
+          return [{
+            url: epLinkMatch[1],
+            type: "iframe",
+            quality: null,
             sourceName: "Gogoanime",
             provider: "gogoanime",
-            headers: { Referer: embedUrl },
-          });
+          }];
         }
       }
-
-      if (sources.length > 0) return sources;
     } catch {
       // Try next domain
       continue;

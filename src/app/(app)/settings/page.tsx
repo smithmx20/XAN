@@ -118,7 +118,7 @@ const KNOWN_SOURCES: { name: string; type: "mp4" | "hls" | "iframe"; desc: strin
   { name: "Zen", type: "iframe", desc: "FlixCloud embed. Often blocked by Cloudflare." },
   { name: "Koto", type: "iframe", desc: "MegaPlay embed. 0 Vercel BW (iframe)." },
   { name: "Pahe-Kiwi-Stream", type: "iframe", desc: "AnimePahe — download page (iframe). Shows download button." },
-  { name: "Gogoanime", type: "hls", desc: "Gogoanime — HLS/MP4 scraped from gogoanime.fi." },
+  { name: "Gogoanime", type: "iframe", desc: "Gogoanime.fi embed (iframe). Loads gogoanime's own player. 0 Vercel BW." },
 ];
 
 // ─── Page ───────────────────────────────────────────────────────────────────
