@@ -7,16 +7,18 @@ import type { AiringSchedule } from "@/types/anime";
 export const dynamic = "force-dynamic";
 
 function getCurrentWeekRange(): [number, number] {
+  // Use LOCAL time (server runtime TZ) for "this week" bounds so the week
+  // starts at the user's local Monday midnight, not UTC midnight.
   const now = new Date();
-  const day = now.getUTCDay();
+  const day = now.getDay(); // 0=Sun .. 6=Sat (local)
   const daysSinceMonday = (day + 6) % 7;
 
   const monday = new Date(now);
-  monday.setUTCDate(now.getUTCDate() - daysSinceMonday);
-  monday.setUTCHours(0, 0, 0, 0);
+  monday.setDate(now.getDate() - daysSinceMonday);
+  monday.setHours(0, 0, 0, 0);
 
   const nextMonday = new Date(monday);
-  nextMonday.setUTCDate(monday.getUTCDate() + 7);
+  nextMonday.setDate(monday.getDate() + 7);
 
   return [Math.floor(monday.getTime() / 1000), Math.floor(nextMonday.getTime() / 1000)];
 }
@@ -38,9 +40,11 @@ export default async function SchedulePage() {
     0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [],
   };
 
+  // Bucket by LOCAL day so "Monday 11pm UTC" lands on Tuesday for IST users
+  // (where it airs at 4:30am Tuesday local) instead of showing under Monday.
   for (const s of allSchedules) {
     if (!s.media) continue;
-    const dayIdx = new Date(s.airingAt * 1000).getUTCDay();
+    const dayIdx = new Date(s.airingAt * 1000).getDay(); // local day
     byDay[dayIdx].push(s);
   }
 
@@ -51,6 +55,9 @@ export default async function SchedulePage() {
   const total = allSchedules.length;
   const fetchFailed = !page1 && !page2;
 
+  // Detect the server/runtime timezone for display (best-effort)
+  const tzLabel = Intl.DateTimeFormat().resolvedOptions().timeZone || "your local timezone";
+
   return (
     <div className="max-w-5xl mx-auto px-4 md:px-6 py-8 space-y-6">
       <div className="space-y-1">
@@ -59,7 +66,7 @@ export default async function SchedulePage() {
           Schedule
         </h1>
         <p className="text-sm text-muted-foreground">
-          Airing times in your local timezone. {total} episode{total !== 1 ? "s" : ""} scheduled this week.
+          Airing times in {tzLabel}. {total} episode{total !== 1 ? "s" : ""} scheduled this week.
         </p>
       </div>
 

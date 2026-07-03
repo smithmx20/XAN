@@ -5,22 +5,23 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { Search, Menu, X, Play, Home as HomeIcon, Flame, History, Settings, Calendar } from "lucide-react";
+import { Search, Menu, X, Play, Home as HomeIcon, Compass, History, Settings, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
   { label: "Home", href: "/home", icon: HomeIcon },
-  { label: "Trending", href: "/trending", icon: Flame },
+  { label: "Discover", href: "/discover", icon: Compass },
   { label: "Schedule", href: "/schedule", icon: Calendar },
   { label: "History", href: "/history", icon: History },
 ];
 
 export function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -43,7 +44,9 @@ export function Navbar() {
     e.preventDefault();
     const q = searchValue.trim();
     if (q) {
-      window.location.href = `/search?q=${encodeURIComponent(q)}`;
+      router.push(`/search?q=${encodeURIComponent(q)}`);
+      setSearchOpen(false);
+      setSearchValue("");
     }
   };
 

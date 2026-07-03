@@ -70,7 +70,7 @@ export const POPULAR_QUERY = `
 `;
 
 export const SEARCH_QUERY = `
-  query ($search: String, $page: Int, $perPage: Int, $genres: [String], $tags: [String], $sort: [MediaSort]) {
+  query ($search: String, $page: Int, $perPage: Int, $genres: [String], $tags: [String], $sort: [MediaSort], $format: MediaFormat) {
     Page(page: $page, perPage: $perPage) {
       pageInfo {
         currentPage
@@ -79,7 +79,7 @@ export const SEARCH_QUERY = `
         perPage
         total
       }
-      media(type: ANIME, search: $search, genre_in: $genres, tag_in: $tags, sort: $sort) {
+      media(type: ANIME, search: $search, genre_in: $genres, tag_in: $tags, sort: $sort, format: $format) {
         ${MEDIA_FIELDS}
       }
     }

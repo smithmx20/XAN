@@ -42,10 +42,10 @@ export function Footer() {
                 </li>
                 <li>
                   <Link
-                    href="/trending"
+                    href="/discover"
                     className="text-foreground/80 hover:text-foreground transition-colors"
                   >
-                    Trending
+                    Discover
                   </Link>
                 </li>
                 <li>
@@ -90,10 +90,20 @@ export function Footer() {
                   </a>
                 </li>
                 <li>
-                  <span className="text-foreground/80">Privacy</span>
+                  <Link
+                    href="/discover"
+                    className="text-foreground/80 hover:text-foreground transition-colors"
+                  >
+                    Discover
+                  </Link>
                 </li>
                 <li>
-                  <span className="text-foreground/80">Terms</span>
+                  <Link
+                    href="/schedule"
+                    className="text-foreground/80 hover:text-foreground transition-colors"
+                  >
+                    Schedule
+                  </Link>
                 </li>
               </ul>
             </div>

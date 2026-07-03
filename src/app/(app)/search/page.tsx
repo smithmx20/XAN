@@ -39,12 +39,13 @@ function SearchPageInner() {
   const initialGenres = searchParams.get("genres")?.split(",").filter(Boolean) ?? [];
   const initialTags = searchParams.get("tags")?.split(",").filter(Boolean) ?? [];
   const initialSort = searchParams.get("sort") || "POPULARITY_DESC";
+  const initialFormat = searchParams.get("format") || "";
 
   const [query, setQuery] = useState(initialQ);
   const [selectedGenres, setSelectedGenres] = useState<string[]>(initialGenres);
   const [selectedTags, setSelectedTags] = useState<string[]>(initialTags);
   const [sort, setSort] = useState(initialSort);
-  const [format, setFormat] = useState("");
+  const [format, setFormat] = useState(initialFormat);
   const [data, setData] = useState<Anime[] | null>(null);
   const [pageInfo, setPageInfo] = useState<PageInfo | null>(null);
   const [page, setPage] = useState(1);
@@ -59,10 +60,11 @@ function SearchPageInner() {
     if (selectedGenres.length > 0) params.set("genres", selectedGenres.join(","));
     if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
     if (sort && sort !== "POPULARITY_DESC") params.set("sort", sort);
+    if (format) params.set("format", format);
     const qs = params.toString();
     router.replace(qs ? `/search?${qs}` : "/search", { scroll: false });
     setPage(1);
-  }, [debouncedQuery, selectedGenres, selectedTags, sort, router]);
+  }, [debouncedQuery, selectedGenres, selectedTags, sort, format, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +75,7 @@ function SearchPageInner() {
     if (debouncedQuery) params.set("q", debouncedQuery);
     if (selectedGenres.length > 0) params.set("genres", selectedGenres.join(","));
     if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
+    if (format) params.set("format", format);
 
     fetch(`/api/search?${params.toString()}`)
       .then(async (res) => {
@@ -93,7 +96,7 @@ function SearchPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, selectedGenres, selectedTags, sort, page]);
+  }, [debouncedQuery, selectedGenres, selectedTags, sort, format, page]);
 
   const handleGenreToggle = useCallback((genre: string) => {
     setSelectedGenres((prev) =>

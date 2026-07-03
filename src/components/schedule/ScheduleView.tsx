@@ -14,7 +14,7 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
 export function ScheduleView({ byDay }: ScheduleViewProps) {
-  const today = new Date().getUTCDay();
+  const today = new Date().getDay(); // local day — matches byDay bucketing
   const [activeDay, setActiveDay] = useState<number>(today);
 
   const entries = byDay[activeDay] ?? [];

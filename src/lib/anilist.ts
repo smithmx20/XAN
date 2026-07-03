@@ -152,6 +152,7 @@ export async function fetchSearch(
   genres?: string[],
   sort?: string,
   tags?: string[],
+  format?: string,
 ): Promise<FetchResult | null> {
   return fetchList(SEARCH_QUERY, {
     search: search || null,
@@ -160,6 +161,7 @@ export async function fetchSearch(
     genres: genres && genres.length > 0 ? genres : undefined,
     tags: tags && tags.length > 0 ? tags : undefined,
     sort: sort ? [sort] : undefined,
+    format: format || undefined,
   });
 }
 

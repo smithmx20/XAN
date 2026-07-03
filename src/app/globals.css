@@ -347,3 +347,136 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ─── Glassmorphism utilities ─── */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.glass-strong {
+  background: rgba(10, 10, 12, 0.55);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ─── Right-edge mask fade (for horizontal scrollers) ─── */
+.mask-fade-r {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 85%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 85%,
+    transparent 100%
+  );
+}
+.mask-fade-edges {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 4%,
+    black 96%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 4%,
+    black 96%,
+    transparent 100%
+  );
+}
+
+/* ─── Outlined text (Netflix-style ranking numbers) ─── */
+.text-stroke {
+  -webkit-text-stroke: 2px rgba(255, 255, 255, 0.22);
+  color: transparent;
+}
+.text-stroke-thin {
+  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.18);
+  color: transparent;
+}
+
+/* ─── Ambient mesh background animation ─── */
+@keyframes mesh-shift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(4%, -3%, 0) scale(1.08);
+  }
+  66% {
+    transform: translate3d(-3%, 4%, 0) scale(0.96);
+  }
+}
+.animate-mesh {
+  animation: mesh-shift 22s ease-in-out infinite;
+}
+@keyframes mesh-shift-2 {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-5%, 5%, 0) scale(1.1);
+  }
+}
+.animate-mesh-2 {
+  animation: mesh-shift-2 28s ease-in-out infinite;
+}
+
+/* ─── Hero Ken-Burns slow zoom ─── */
+@keyframes ken-burns {
+  0% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1.15);
+  }
+}
+.animate-ken-burns {
+  animation: ken-burns 14s ease-out forwards;
+}
+
+/* ─── Hero info panel slide-in ─── */
+@keyframes hero-info-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-hero-info {
+  animation: hero-info-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* ─── Subtle grain texture overlay ─── */
+.grain-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.35 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+/* ─── Hide horizontal scrollbar but keep scroll ─── */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
