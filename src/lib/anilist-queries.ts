@@ -10,6 +10,7 @@ const MEDIA_FIELDS = `
     native
   }
   coverImage {
+    extraLarge
     large
     color
   }
@@ -138,6 +139,12 @@ export const ANIME_DETAIL_QUERY = `
             id
             name { full }
             image { medium }
+          }
+          voiceActors(language: JAPANESE, sort: ROLE) {
+            id
+            name { full }
+            image { large }
+            language
           }
         }
       }

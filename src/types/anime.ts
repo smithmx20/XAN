@@ -31,7 +31,8 @@ export type NextAiringEpisode = z.infer<typeof NextAiringEpisodeSchema>;
 // ─── Cover Image Schema ───
 export const CoverImageSchema = z
   .object({
-    large: z.string(), // ✅ NOT z.string().url() — AniList returns protocol-relative URLs
+    extraLarge: z.string().nullable().default(null), // ~460×650 — best for hero/large displays
+    large: z.string(), // ✅ NOT z.string().url() — AniList returns protocol-relative URLs (~230×335)
     color: z.string().nullable().default(null),
   })
   .nullable()
@@ -111,6 +112,19 @@ export const CharacterEdgeSchema = z.object({
       .nullable()
       .default(null),
   }),
+  voiceActors: z
+    .array(
+      z.object({
+        id: z.number(),
+        name: z.object({ full: z.string().nullable().default(null) }),
+        image: z
+          .object({ large: z.string().nullable().default(null) })
+          .nullable()
+          .default(null),
+        language: z.string().nullable().default(null),
+      }),
+    )
+    .default([]),
 });
 
 export type CharacterEdge = z.infer<typeof CharacterEdgeSchema>;

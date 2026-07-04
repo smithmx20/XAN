@@ -461,6 +461,47 @@
   animation: hero-info-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+/* ─── AnimeCard entrance (CSS-only, replaces motion whileInView) ─── */
+/* Uses --card-index custom property for staggered delay. Falls back to 0. */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.card-enter {
+  animation: card-enter 0.4s cubic-bezier(0.25, 0.4, 0.25, 1) both;
+  animation-delay: calc(min(var(--card-index, 0), 10) * 30ms);
+}
+
+/* ─── Reduced motion ─── */
+/* Applied via the .xan-reduce-motion class on <html> (user setting) OR
+   via the OS prefers-reduced-motion media query. Disables Ken Burns zoom,
+   ambient blob drift, card entrance, hero info slide, shimmer, etc. */
+.xan-reduce-motion *,
+.xan-reduce-motion *::before,
+.xan-reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ─── Subtle grain texture overlay ─── */
 .grain-overlay::after {
   content: "";

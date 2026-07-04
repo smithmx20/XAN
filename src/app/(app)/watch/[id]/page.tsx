@@ -32,6 +32,7 @@ import {
 import { useWatchHistory } from "@/hooks/useWatchHistory";
 import { useSettings } from "@/hooks/useSettings";
 import { useVideoEnhancer } from "@/hooks/useVideoEnhancer";
+import { useAllAnimeInfo } from "@/hooks/useAllAnimeInfo";
 import { VideoEnhancerPanel } from "@/components/watch/VideoEnhancerPanel";
 import { VideoEnhancerFilters } from "@/components/watch/VideoEnhancerFilters";
 import { ArrowLeft, Star, Clock, Calendar, Tv, Info, MonitorPlay, Wand2 } from "lucide-react";
@@ -68,8 +69,6 @@ function WatchPageInner({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [showAutoPlay, setShowAutoPlay] = useState(false);
-  const [dubAvailable, setDubAvailable] = useState(false);
-  const [checkingDub, setCheckingDub] = useState(true);
   // ✅ Track whether dub was requested but fell back to sub for this episode
   const [fellBackToSub, setFellBackToSub] = useState(false);
 
@@ -162,44 +161,13 @@ function WatchPageInner({ params }: PageProps) {
     ? savedEntry.timestamp
     : undefined;
 
-  // ✅ Check AllAnime for dub availability when anime loads
-  useEffect(() => {
-    if (!anime) return;
-    let cancelled = false;
-    setCheckingDub(true);
-    setDubAvailable(false);
-    const title = getTitle(anime.title);
-    if (!title.trim()) {
-      setCheckingDub(false);
-      return;
-    }
-
-    fetch(`/api/allanime?q=${encodeURIComponent(title)}&limit=5`)
-      .then(async (res) => {
-        if (!res.ok) return null;
-        return await res.json();
-      })
-      .then((json) => {
-        if (cancelled || !json) return;
-        const edges = json?.edges ?? [];
-        const match = edges.find(
-          (e: { aniListId?: string | null }) =>
-            e.aniListId === String(animeId),
-        );
-        const show = match ?? edges[0];
-        if (show?.availableEpisodes?.dub && show.availableEpisodes.dub > 0) {
-          setDubAvailable(true);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setCheckingDub(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [anime, animeId]);
+  // ✅ Shared AllAnime lookup — deduped across this page + EpisodePanel +
+  //    EpisodeGrid via useAllAnimeInfo module-level cache. Previously 3×
+  //    identical fetches per pageview; now 1×.
+  const animeTitleForLookup = anime ? getTitle(anime.title) : "";
+  const allAnimeInfo = useAllAnimeInfo(animeId, animeTitleForLookup, !!anime);
+  const dubAvailable = allAnimeInfo.data?.dubAvailable ?? false;
+  const checkingDub = allAnimeInfo.isLoading;
 
   // ✅ Reset fallback flag when episode changes OR when user manually changes mode
   useEffect(() => {
@@ -635,6 +603,8 @@ function WatchPageInner({ params }: PageProps) {
           animeId={anime.id}
           animeTitle={title}
           episodeCount={anime.episodes}
+          allAnimeEpisodeCount={allAnimeInfo.data?.episodeCount ?? null}
+          allAnimeLoading={allAnimeInfo.isLoading}
           currentEpisode={currentEpisode}
           nextAiringEpisode={anime.nextAiringEpisode}
           mode={mode}

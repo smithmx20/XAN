@@ -7,7 +7,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { Search, Menu, X, Play, Home as HomeIcon, Compass, History, Settings, Calendar } from "lucide-react";
+import { Search, Menu, X, Play, Home as HomeIcon, Compass, History, Settings, Calendar, Library } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,7 @@ const NAV_LINKS = [
   { label: "Home", href: "/home", icon: HomeIcon },
   { label: "Discover", href: "/discover", icon: Compass },
   { label: "Schedule", href: "/schedule", icon: Calendar },
+  { label: "My Library", href: "/list", icon: Library },
   { label: "History", href: "/history", icon: History },
 ];
 

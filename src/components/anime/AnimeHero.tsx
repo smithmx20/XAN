@@ -6,6 +6,8 @@ import Link from "next/link";
 import { Play, Star, Clock, Calendar, Tv } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AnimeStatusButton } from "@/components/anime/AnimeStatusButton";
+import { BookmarkButton } from "@/components/cards/BookmarkButton";
 import {
   getTitle,
   sanitizeDescription,
@@ -43,11 +45,11 @@ export function AnimeHero({ anime }: AnimeHeroProps) {
       </div>
 
       {/* Content overlay */}
-      <div className="max-w-7xl mx-auto px-4 md:px-6 -mt-32 md:-mt-48 relative z-10">
+      <div className="max-w-7xl mx-auto px-4 md:px-6 -mt-24 md:-mt-32 lg:-mt-48 relative z-10">
         <div className="flex flex-col md:flex-row gap-6">
           {/* Cover */}
           <div className="flex-shrink-0 mx-auto md:mx-0">
-            <div className="relative w-40 h-60 md:w-48 md:h-72 rounded-xl overflow-hidden border-2 border-xan-border shadow-2xl">
+            <div className="relative w-36 h-52 sm:w-40 sm:h-60 md:w-44 md:h-64 lg:w-48 lg:h-72 rounded-xl overflow-hidden border-2 border-xan-border shadow-2xl">
               <Image
                 src={cover}
                 alt={title}
@@ -59,7 +61,7 @@ export function AnimeHero({ anime }: AnimeHeroProps) {
           </div>
 
           {/* Info */}
-          <div className="flex-1 space-y-3 md:pt-20 lg:pt-32 text-center md:text-left">
+          <div className="flex-1 space-y-3 md:pt-12 lg:pt-32 text-center md:text-left">
             <h1 className="text-2xl md:text-4xl font-display font-extrabold text-foreground leading-tight">
               {title}
             </h1>
@@ -121,7 +123,7 @@ export function AnimeHero({ anime }: AnimeHeroProps) {
             )}
 
             {/* Actions */}
-            <div className="flex items-center gap-2 justify-center md:justify-start pt-2">
+            <div className="flex items-center gap-2 justify-center md:justify-start pt-2 flex-wrap">
               <Button
                 asChild
                 className="bg-gradient-to-r from-xan-crimson to-xan-violet hover:opacity-90 text-white border-0"
@@ -131,6 +133,17 @@ export function AnimeHero({ anime }: AnimeHeroProps) {
                   Watch Now
                 </Link>
               </Button>
+              <AnimeStatusButton
+                animeId={anime.id}
+                title={title}
+                coverImage={cover}
+                episodes={anime.episodes}
+              />
+              <BookmarkButton
+                animeId={anime.id}
+                title={title}
+                coverImage={cover}
+              />
               <Badge variant="outline" className="border-xan-border text-muted-foreground">
                 {formatStatus(anime.status)}
               </Badge>

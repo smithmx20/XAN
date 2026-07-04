@@ -1,10 +1,15 @@
-// components/home/PopularGrid.tsx
-// Server Component — static grid
+"use client";
 
+// components/home/PopularGrid.tsx
+// ✅ Converted from a static grid to a horizontal scroller with side buttons
+//    so it matches the other home sections (Top 10, Continue Watching, etc.)
+
+import { useRef } from "react";
+import Link from "next/link";
+import { ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { AnimeCard } from "@/components/cards/AnimeCard";
 import type { Anime, PageInfo } from "@/types/anime";
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 
 interface PopularGridProps {
   anime: Anime[];
@@ -12,6 +17,15 @@ interface PopularGridProps {
 }
 
 export function PopularGrid({ anime }: PopularGridProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const scrollBy = (dir: "left" | "right") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const amount = Math.min(el.clientWidth * 0.8, 900);
+    el.scrollBy({ left: dir === "left" ? -amount : amount, behavior: "smooth" });
+  };
+
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
@@ -23,18 +37,39 @@ export function PopularGrid({ anime }: PopularGridProps) {
             All-time most-watched titles
           </p>
         </div>
-        <Link
-          href="/search"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-        >
-          View all
-          <ArrowRight className="h-3 w-3" />
-        </Link>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={() => scrollBy("left")}
+            aria-label="Scroll left"
+            className="rounded-full glass border-xan-border hover:bg-white/10 h-8 w-8 md:h-9 md:w-9"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={() => scrollBy("right")}
+            aria-label="Scroll right"
+            className="rounded-full glass border-xan-border hover:bg-white/10 h-8 w-8 md:h-9 md:w-9"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      <div
+        ref={scrollRef}
+        className="flex gap-4 overflow-x-auto no-scrollbar -mx-4 px-4 pb-4 mask-fade-r"
+      >
         {anime.map((item, idx) => (
-          <AnimeCard key={item.id} anime={item} index={idx} />
+          <div
+            key={item.id}
+            className="flex-shrink-0 w-[140px] sm:w-[160px] md:w-[180px] snap-start"
+          >
+            <AnimeCard anime={item} index={idx} />
+          </div>
         ))}
       </div>
     </section>

@@ -5,10 +5,12 @@
 // Compact horizontal scroller — one small portrait card per anime
 // (groups all watched episodes of the same anime into one entry)
 
+import { useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { motion } from "motion/react";
-import { History, Play, ChevronRight } from "lucide-react";
+import { History, Play, ChevronRight, ChevronLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useWatchHistory, type WatchHistoryEntry } from "@/hooks/useWatchHistory";
 
 interface GroupedHistoryEntry {
@@ -65,6 +67,14 @@ function formatProgress(timestamp: number, duration: number): number {
 
 export function ContinueWatchingSmall() {
   const { history, isLoaded } = useWatchHistory();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const scrollBy = (dir: "left" | "right") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const amount = Math.min(el.clientWidth * 0.8, 900);
+    el.scrollBy({ left: dir === "left" ? -amount : amount, behavior: "smooth" });
+  };
 
   if (!isLoaded) return null;
 
@@ -89,16 +99,32 @@ export function ContinueWatchingSmall() {
             </p>
           </div>
         </div>
-        <Link
-          href="/history"
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-0.5"
-        >
-          View all
-          <ChevronRight className="h-3 w-3" />
-        </Link>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={() => scrollBy("left")}
+            aria-label="Scroll left"
+            className="rounded-full glass border-xan-border hover:bg-white/10 h-8 w-8 md:h-9 md:w-9"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={() => scrollBy("right")}
+            aria-label="Scroll right"
+            className="rounded-full glass border-xan-border hover:bg-white/10 h-8 w-8 md:h-9 md:w-9"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
-      <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4 pb-2 mask-fade-r">
+      <div
+        ref={scrollRef}
+        className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4 pb-2 mask-fade-r"
+      >
         {recent.map((entry, idx) => {
           const progress = formatProgress(
             entry.latest.timestamp,

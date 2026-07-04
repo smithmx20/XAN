@@ -116,7 +116,6 @@ export function SimilarAnime({
                   fill
                   sizes="(max-width: 640px) 50vw, 200px"
                   className="object-cover group-hover:scale-105 transition-transform"
-                  unoptimized
                 />
               </div>
               <p className="text-xs font-medium text-foreground truncate group-hover:text-xan-crimson transition-colors">

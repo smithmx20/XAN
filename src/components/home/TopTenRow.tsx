@@ -16,8 +16,9 @@ interface TopTenRowProps {
 }
 
 /**
- * Netflix-style ranked row — huge outlined ranking numbers (1–10) behind
- * each portrait card. Capped to 10 items.
+ * Top 10 ranked row — clean portrait cards in a horizontal scroller.
+ * Order implies rank (left = #1). No big outlined numbers.
+ * Capped to 10 items.
  */
 export function TopTenRow({ anime }: TopTenRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -52,13 +53,13 @@ export function TopTenRow({ anime }: TopTenRowProps) {
           </div>
         </div>
 
-        <div className="hidden md:flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <Button
             variant="secondary"
             size="icon"
             onClick={() => scrollBy("left")}
             aria-label="Scroll left"
-            className="rounded-full glass border-xan-border hover:bg-white/10"
+            className="rounded-full glass border-xan-border hover:bg-white/10 h-8 w-8 md:h-9 md:w-9"
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -67,7 +68,7 @@ export function TopTenRow({ anime }: TopTenRowProps) {
             size="icon"
             onClick={() => scrollBy("right")}
             aria-label="Scroll right"
-            className="rounded-full glass border-xan-border hover:bg-white/10"
+            className="rounded-full glass border-xan-border hover:bg-white/10 h-8 w-8 md:h-9 md:w-9"
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -76,10 +77,9 @@ export function TopTenRow({ anime }: TopTenRowProps) {
 
       <div
         ref={scrollRef}
-        className="flex gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory -mx-4 px-4 pb-4 mask-fade-r"
+        className="flex gap-2 sm:gap-3 overflow-x-auto no-scrollbar snap-x snap-mandatory -mx-4 px-4 pb-4 mask-fade-r"
       >
         {items.map((item, idx) => {
-          const rank = idx + 1;
           const title = getTitle(item.title);
           const image = item.coverImage?.large ?? "/placeholder-card.png";
           const color = item.coverImage?.color ?? "#e94560";
@@ -95,35 +95,19 @@ export function TopTenRow({ anime }: TopTenRowProps) {
                 delay: Math.min(idx * 0.04, 0.4),
                 ease: [0.25, 0.4, 0.25, 1],
               }}
-              className="flex-shrink-0 snap-start group relative flex items-end"
-              style={{ width: "260px", height: "220px" }}
+              className="flex-shrink-0 snap-start group"
+              style={{ width: "clamp(120px, 32vw, 170px)" }}
             >
-              {/* Big outlined rank number */}
-              <span
-                className="select-none font-display font-extrabold leading-none text-stroke"
-                style={{
-                  fontSize: "180px",
-                  marginLeft: "-12px",
-                  marginBottom: "-20px",
-                  zIndex: 1,
-                  textShadow: "0 4px 30px rgba(0,0,0,0.4)",
-                }}
-                aria-hidden
-              >
-                {rank}
-              </span>
-
-              {/* Card */}
               <Link
                 href={`/anime/${item.id}`}
-                className="relative block w-[160px] h-[220px] rounded-xl overflow-hidden bg-xan-card border border-xan-border transition-all duration-300 group-hover:border-xan-crimson/60 group-hover:shadow-[0_12px_40px_rgba(0,0,0,0.55)] group-hover:-translate-y-1 ml-[-8px]"
-                style={{ zIndex: 2 }}
+                className="relative block w-full rounded-xl overflow-hidden bg-xan-card border border-xan-border transition-all duration-300 group-hover:border-xan-crimson/60 group-hover:shadow-[0_12px_40px_rgba(0,0,0,0.55)] group-hover:-translate-y-1"
+                style={{ aspectRatio: "2 / 3" }}
               >
                 <Image
                   src={image}
                   alt={title}
                   fill
-                  sizes="160px"
+                  sizes="(max-width: 640px) 120px, 170px"
                   className="object-cover transition-transform duration-300 group-hover:scale-105"
                 />
                 {/* Gradient overlay */}

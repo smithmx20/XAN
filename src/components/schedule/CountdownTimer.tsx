@@ -1,7 +1,10 @@
 "use client";
 
 // components/schedule/CountdownTimer.tsx
-import { useEffect, useState } from "react";
+// ✅ Uses useCountdownTick — a single shared setInterval across ALL instances.
+//    50 schedule cards = 1 interval (was 50).
+
+import { useCountdownTick } from "@/hooks/useCountdownTick";
 
 interface CountdownTimerProps {
   airingAt: number;
@@ -31,14 +34,13 @@ function computeRemaining(airingAt: number): Remaining {
 }
 
 export function CountdownTimer({ airingAt }: CountdownTimerProps) {
-  const [remaining, setRemaining] = useState<Remaining>(() => computeRemaining(airingAt));
+  // ✅ Shared tick — one setInterval for the whole page, not one per card.
+  // The hook returns the current timestamp; we don't use the value directly,
+  // but subscribing causes this component to re-render once per second.
+  useCountdownTick();
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      setRemaining(computeRemaining(airingAt));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [airingAt]);
+  // Recompute on every render (once per second via the shared tick)
+  const remaining = computeRemaining(airingAt);
 
   if (remaining.isAired) {
     return (

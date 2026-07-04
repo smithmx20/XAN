@@ -7,17 +7,22 @@
 //    ScrollArea's Viewport was intercepting click events on Link components,
 //    making episode sidebar clicks not register.
 // ✅ Preserves sub/dub mode (type param) in episode links.
+// ✅ Accepts allAnimeEpisodeCount from parent (shared via useAllAnimeInfo hook)
+//    so we don't fire a duplicate /api/allanime request per pageview.
 
 import Link from "next/link";
 import { CheckCircle2, Play, Clock, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState, useEffect } from "react";
 import type { NextAiringEpisode } from "@/types/anime";
 
 interface EpisodePanelProps {
   animeId: number;
   animeTitle: string;
   episodeCount: number | null;
+  /** Episode count from AllAnime (passed down from parent's shared lookup) */
+  allAnimeEpisodeCount?: number | null;
+  /** Whether the AllAnime lookup is still loading */
+  allAnimeLoading?: boolean;
   currentEpisode: number;
   nextAiringEpisode?: NextAiringEpisode | null;
   /** Current sub/dub mode — used to preserve type param in episode links */
@@ -47,55 +52,16 @@ export function EpisodePanel({
   animeId,
   animeTitle,
   episodeCount,
+  allAnimeEpisodeCount = null,
+  allAnimeLoading = false,
   currentEpisode,
   nextAiringEpisode,
   mode = "sub",
 }: EpisodePanelProps) {
-  const [allAnimeCount, setAllAnimeCount] = useState<number | null>(null);
-  const [fetchingAllAnime, setFetchingAllAnime] = useState(false);
+  const fetchingAllAnime = allAnimeLoading && episodeCount == null && allAnimeEpisodeCount == null;
 
-  useEffect(() => {
-    if (episodeCount != null) return;
-    if (!animeTitle.trim()) return;
-
-    let cancelled = false;
-    setFetchingAllAnime(true);
-
-    fetch(`/api/allanime?q=${encodeURIComponent(animeTitle)}&limit=5`)
-      .then(async (res) => {
-        if (!res.ok) return null;
-        return await res.json();
-      })
-      .then((json) => {
-        if (cancelled || !json) return;
-        const edges = json?.edges ?? [];
-        const match = edges.find(
-          (e: { aniListId?: string | null }) =>
-            e.aniListId === String(animeId),
-        );
-        const show = match ?? edges[0];
-        if (show?.availableEpisodes) {
-          const sub = show.availableEpisodes.sub ?? 0;
-          const dub = show.availableEpisodes.dub ?? 0;
-          const raw = show.availableEpisodes.raw ?? 0;
-          const count = Math.max(sub, dub, raw);
-          if (count > 0) {
-            setAllAnimeCount(count);
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setFetchingAllAnime(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [animeId, animeTitle, episodeCount]);
-
-  const effectiveCount = episodeCount ?? allAnimeCount ?? 12;
-  const usingAllAnimeFallback = episodeCount == null && allAnimeCount != null;
+  const effectiveCount = episodeCount ?? allAnimeEpisodeCount ?? 12;
+  const usingAllAnimeFallback = episodeCount == null && allAnimeEpisodeCount != null;
 
   const total = effectiveCount;
   const cappedTotal = Math.min(total, MAX_RENDERED);

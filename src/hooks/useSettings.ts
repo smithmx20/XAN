@@ -81,6 +81,17 @@ export interface Settings {
   /** Default sort order for browse/trending pages */
   defaultSort: "trending" | "popular" | "score" | "newest" | "oldest";
 
+  // ─── Accessibility ───
+  /**
+   * Reduce motion across the app. When true (or when the user's OS has
+   * prefers-reduced-motion set), disables Ken Burns zoom, ambient blob
+   * animation, card entrance animations, etc. Three states:
+   *   "auto"     — respect the OS prefers-reduced-motion setting (default)
+   *   "reduce"   — always reduce motion
+   *   "no-reduce"— always allow motion
+   */
+  reducedMotion: "auto" | "reduce" | "no-reduce";
+
   // ─── Data & Privacy ───
   /** Track watch history in localStorage */
   saveHistory: boolean;
@@ -103,6 +114,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",
+  reducedMotion: "auto",
   saveHistory: true,
 };
 

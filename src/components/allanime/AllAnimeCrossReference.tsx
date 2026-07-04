@@ -1,11 +1,14 @@
 // components/allanime/AllAnimeCrossReference.tsx
 // Server Component — shows AllAnime metadata alongside AniList on the detail page.
 // Provides episode counts (sub/dub/raw), AllAnime score, and a link to AllAnime.
+// ✅ Technical/dev info (AniList ID, MAL ID, raw score) hidden behind a
+//    client-side toggle so casual users don't see it.
 
 import { findShowByAniListId } from "@/lib/allanime";
 import Link from "next/link";
 import { ExternalLink, Tv, Film, CheckCircle2, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { DevInfoToggle } from "./DevInfoToggle";
 
 interface AllAnimeCrossReferenceProps {
   anilistId: number;
@@ -36,9 +39,10 @@ export async function AllAnimeCrossReference({
           </span>
           AllAnime Cross-Reference
         </h3>
-        {show.score != null && (
-          <Badge variant="outline" className="border-xan-border text-muted-foreground">
-            Score: {show.score.toFixed(2)}
+        {hasStreams && (
+          <Badge variant="outline" className="border-emerald-500/30 text-emerald-400">
+            <CheckCircle2 className="h-3 w-3 mr-1" />
+            Streamable
           </Badge>
         )}
       </div>
@@ -86,37 +90,8 @@ export async function AllAnimeCrossReference({
         </div>
       </div>
 
-      {/* Metadata */}
-      <div className="text-xs text-muted-foreground space-y-1">
-        {show.type && (
-          <div className="flex items-center gap-1.5">
-            {show.type === "TV" ? (
-              <Tv className="h-3 w-3" />
-            ) : (
-              <Film className="h-3 w-3" />
-            )}
-            Type: <span className="text-foreground">{show.type}</span>
-          </div>
-        )}
-        {show.countryOfOrigin && (
-          <div>
-            Origin: <span className="text-foreground">{show.countryOfOrigin}</span>
-          </div>
-        )}
-        {show.aniListId && (
-          <div>
-            AniList ID: <span className="text-foreground font-mono">{show.aniListId}</span>
-            {show.malId && (
-              <>
-                {" "}· MAL ID: <span className="text-foreground font-mono">{show.malId}</span>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Streaming note + link */}
-      <div className="pt-2 border-t border-xan-border space-y-2">
+      <div className="space-y-2">
         {hasStreams ? (
           <p className="text-xs text-emerald-500 flex items-center gap-1.5">
             <CheckCircle2 className="h-3 w-3 flex-shrink-0" />
@@ -137,6 +112,16 @@ export async function AllAnimeCrossReference({
           <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
+
+      {/* Dev info — collapsed by default */}
+      <DevInfoToggle
+        type={show.type}
+        countryOfOrigin={show.countryOfOrigin}
+        aniListId={show.aniListId}
+        malId={show.malId}
+        score={show.score}
+      />
     </section>
   );
 }
+

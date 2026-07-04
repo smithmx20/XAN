@@ -26,6 +26,7 @@ import {
   SkipBack,
   EyeOff,
   Sparkles,
+  Accessibility,
   Trash2,
   Download,
   RotateCcw,
@@ -53,11 +54,14 @@ import {
   CircleDashed,
   Droplet,
   Ghost,
+  Search,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -105,15 +109,55 @@ type SectionId =
   | "data"
   | "about";
 
-const SECTIONS: { id: SectionId; label: string; icon: typeof Palette }[] = [
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "playback", label: "Playback", icon: Play },
-  { id: "audio", label: "Audio & Subtitles", icon: Languages },
-  { id: "enhancer", label: "Video Enhancer", icon: Wand2 },
-  { id: "bandwidth", label: "Bandwidth", icon: Zap },
-  { id: "content", label: "Content & Discovery", icon: ShieldCheck },
-  { id: "data", label: "Data & Privacy", icon: Database },
-  { id: "about", label: "About", icon: Info },
+const SECTIONS: { id: SectionId; label: string; icon: typeof Palette; keywords: string[] }[] = [
+  {
+    id: "appearance",
+    label: "Appearance",
+    icon: Palette,
+    keywords: ["theme", "dark", "light", "color", "motion", "animation", "reduce motion", "look"],
+  },
+  {
+    id: "playback",
+    label: "Playback",
+    icon: Play,
+    keywords: ["autoplay", "resume", "speed", "volume", "skip", "intro", "outro", "next episode"],
+  },
+  {
+    id: "audio",
+    label: "Audio & Subtitles",
+    icon: Languages,
+    keywords: ["sub", "dub", "subtitle", "language", "japanese", "english", "audio"],
+  },
+  {
+    id: "enhancer",
+    label: "Video Enhancer",
+    icon: Wand2,
+    keywords: ["brightness", "contrast", "saturation", "filter", "preset", "video", "color grading"],
+  },
+  {
+    id: "bandwidth",
+    label: "Bandwidth",
+    icon: Zap,
+    keywords: ["stream", "quality", "proxy", "cdn", "data", "vercel", "cloudflare", "source", "provider"],
+  },
+  {
+    id: "content",
+    label: "Content & Discovery",
+    icon: ShieldCheck,
+    keywords: ["adult", "nsfw", "spoiler", "sort", "genre", "filter", "hide"],
+  },
+  {
+    id: "data",
+    label: "Data & Privacy",
+    icon: Database,
+    keywords: ["history", "localStorage", "clear", "export", "privacy", "tracking", "cache"],
+  },
+  {
+    id: "about",
+    label: "About",
+    icon: Info,
+    keywords: ["version", "xan", "github", "anilist", "license", "credits"],
+  },
 ];
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -167,12 +211,30 @@ export default function SettingsPage() {
   const { stats: tierStats, since: tierStatsSince, clearStats: clearTierStats } = useBandwidthStats();
   const enhancer = useVideoEnhancer();
   const [activeSection, setActiveSection] = useState<SectionId>("appearance");
+  const [searchQuery, setSearchQuery] = useState("");
   const [exported, setExported] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [clearStatsOpen, setClearStatsOpen] = useState(false);
   const [enhancerSaveName, setEnhancerSaveName] = useState("");
   const [enhancerRenamingId, setEnhancerRenamingId] = useState<string | null>(null);
   const [enhancerRenameValue, setEnhancerRenameValue] = useState("");
+
+  // ✅ Search filtering — when searchQuery is set, only sections whose label
+  // or keywords match are rendered. Empty query = all sections visible.
+  const visibleSections: Set<SectionId> = (() => {
+    if (!searchQuery.trim()) return new Set(SECTIONS.map((s) => s.id));
+    const q = searchQuery.toLowerCase();
+    return new Set(
+      SECTIONS.filter(
+        (s) =>
+          s.label.toLowerCase().includes(q) ||
+          s.keywords.some((k) => k.includes(q)),
+      ).map((s) => s.id),
+    );
+  })();
+
+  const isSearching = searchQuery.trim().length > 0;
+  const hasResults = visibleSections.size > 0;
 
   // Scroll spy: highlight nav chip for the section currently in view
   useEffect(() => {
@@ -247,10 +309,31 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      {/* ─── Search within settings ─── */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Input
+          type="text"
+          placeholder="Search settings… (e.g. theme, autoplay, subtitles)"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9 h-10 bg-xan-card border-xan-border focus-visible:ring-xan-crimson/30"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            aria-label="Clear search"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
       {/* ─── Section nav chips (sticky) ─── */}
       <nav className="sticky top-16 z-20 -mx-4 px-4 py-2 bg-background/80 backdrop-blur-md border-b border-xan-border">
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-          {SECTIONS.map(({ id, label, icon: Icon }) => {
+          {SECTIONS.filter((s) => visibleSections.has(s.id)).map(({ id, label, icon: Icon }) => {
             const active = activeSection === id;
             return (
               <a
@@ -272,6 +355,7 @@ export default function SettingsPage() {
       </nav>
 
       {/* ─── Appearance ─── */}
+      {visibleSections.has("appearance") && (
       <section id="appearance" className="scroll-mt-32">
         <SectionHeader
           icon={Palette}
@@ -311,11 +395,43 @@ export default function SettingsPage() {
                 ))}
               </div>
             </SettingRow>
+
+            <div className="h-px bg-xan-border/60" />
+
+            <SettingRow
+              icon={Accessibility}
+              title="Reduce motion"
+              description="Disable Ken Burns zoom, ambient background drift, card entrance animations, and other decorative motion. Helps with vestibular sensitivity."
+            >
+              <div className="flex gap-1.5 bg-xan-card/60 p-1 rounded-lg border border-xan-border">
+                {(
+                  [
+                    { value: "auto", label: "Auto" },
+                    { value: "reduce", label: "Reduce" },
+                    { value: "no-reduce", label: "Allow" },
+                  ] as const
+                ).map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => update("reducedMotion", value)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      settings.reducedMotion === value
+                        ? "bg-gradient-to-r from-xan-crimson to-xan-violet text-white shadow"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
           </CardContent>
         </Card>
       </section>
+      )}
 
       {/* ─── Playback ─── */}
+      {visibleSections.has("playback") && (
       <section id="playback" className="scroll-mt-32">
         <SectionHeader
           icon={Play}
@@ -415,8 +531,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+      )}
 
       {/* ─── Audio & Subtitles ─── */}
+      {visibleSections.has("audio") && (
       <section id="audio" className="scroll-mt-32">
         <SectionHeader
           icon={Languages}
@@ -449,8 +567,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+      )}
 
       {/* ─── Video Enhancer ─── */}
+      {visibleSections.has("enhancer") && (
       <section id="enhancer" className="scroll-mt-32">
         <SectionHeader
           icon={Wand2}
@@ -696,8 +816,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+      )}
 
       {/* ─── Bandwidth ─── */}
+      {visibleSections.has("bandwidth") && (
       <section id="bandwidth" className="scroll-mt-32">
         <SectionHeader
           icon={Zap}
@@ -1177,8 +1299,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+      )}
 
       {/* ─── Content & Discovery ─── */}
+      {visibleSections.has("content") && (
       <section id="content" className="scroll-mt-32">
         <SectionHeader
           icon={ShieldCheck}
@@ -1235,8 +1359,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+      )}
 
       {/* ─── Data & Privacy ─── */}
+      {visibleSections.has("data") && (
       <section id="data" className="scroll-mt-32">
         <SectionHeader
           icon={Database}
@@ -1345,8 +1471,10 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+      )}
 
       {/* ─── About ─── */}
+      {visibleSections.has("about") && (
       <section id="about" className="scroll-mt-32">
         <SectionHeader
           icon={Info}
@@ -1431,6 +1559,26 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </section>
+      )}
+
+      {/* ─── No search results ─── */}
+      {isSearching && !hasResults && (
+        <div className="rounded-xl border border-xan-border bg-xan-card/50 py-16 text-center">
+          <Search className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+          <p className="text-foreground font-medium">No settings found</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            No settings match &ldquo;{searchQuery}&rdquo;. Try a different term.
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSearchQuery("")}
+            className="mt-4 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Clear search
+          </Button>
+        </div>
+      )}
 
       {/* ─── Reset all settings ─── */}
       <div className="pt-4 border-t border-xan-border">

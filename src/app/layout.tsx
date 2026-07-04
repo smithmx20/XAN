@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Nunito, Inter, Outfit } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ReducedMotionEnforcer } from "@/components/ReducedMotionEnforcer";
 import "./globals.css";
 
 // ✅ Font variables — available in CSS via var(--font-nunito), etc.
@@ -59,6 +60,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <ReducedMotionEnforcer />
           {children}
         </ThemeProvider>
       </body>

@@ -10,9 +10,11 @@ import { CountdownTimer } from "./CountdownTimer";
 
 interface ScheduleCardProps {
   schedule: AiringSchedule;
+  /** When true, renders without outer border/bg (used inside expanded group lists) */
+  embedded?: boolean;
 }
 
-export function ScheduleCard({ schedule }: ScheduleCardProps) {
+export function ScheduleCard({ schedule, embedded = false }: ScheduleCardProps) {
   const { media, airingAt, episode } = schedule;
 
   if (!media) return null;
@@ -33,7 +35,11 @@ export function ScheduleCard({ schedule }: ScheduleCardProps) {
   return (
     <Link
       href={`/anime/${media.id}`}
-      className="group flex gap-3 p-3 rounded-lg border border-xan-border bg-xan-card/50 hover:bg-xan-card hover:border-xan-crimson/30 transition-all"
+      className={
+        embedded
+          ? "group flex gap-3 p-2.5 hover:bg-xan-card-hover transition-colors"
+          : "group flex gap-3 p-3 rounded-lg border border-xan-border bg-xan-card/50 hover:bg-xan-card hover:border-xan-crimson/30 transition-all"
+      }
     >
       <div
         className="relative flex-shrink-0 w-12 h-16 rounded overflow-hidden bg-zinc-900"
@@ -45,7 +51,6 @@ export function ScheduleCard({ schedule }: ScheduleCardProps) {
           fill
           sizes="48px"
           className="object-cover"
-          unoptimized
         />
       </div>
 

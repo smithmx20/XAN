@@ -4,10 +4,10 @@
 import { Suspense } from "react";
 import { fetchTrending, fetchPopular } from "@/lib/anilist";
 import { HomeHero } from "@/components/home/HomeHero";
-import { GenrePills } from "@/components/home/GenrePills";
 import { TopTenRow } from "@/components/home/TopTenRow";
 import { PopularGrid } from "@/components/home/PopularGrid";
 import { ContinueWatchingSmall } from "@/components/home/ContinueWatchingSmall";
+import { BookmarksRow } from "@/components/home/BookmarksRow";
 import { RecommendationsRow } from "@/components/home/RecommendationsRow";
 import { AnimeCardSkeleton } from "@/components/cards/AnimeCardSkeleton";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -61,11 +61,11 @@ export default function HomePage() {
 
       {/* Page content */}
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-10 md:py-14 space-y-10 md:space-y-14">
-        {/* Quick genre shortcuts */}
-        <GenrePills />
-
         {/* Continue Watching (compact, one card per anime) */}
         <ContinueWatchingSmall />
+
+        {/* Bookmarks (saved for later) */}
+        <BookmarksRow />
 
         {/* Top 10 Today — Netflix-style ranked row */}
         <ErrorBoundary message="Couldn't load Top 10">

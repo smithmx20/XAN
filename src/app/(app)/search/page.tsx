@@ -3,7 +3,7 @@
 // app/(app)/search/page.tsx
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Search as SearchIcon, SearchX } from "lucide-react";
+import { Search as SearchIcon, SearchX, X } from "lucide-react";
 import { SearchBar } from "@/components/search/SearchBar";
 import { FilterPanel } from "@/components/search/FilterPanel";
 import { AnimeCard } from "@/components/cards/AnimeCard";
@@ -11,6 +11,7 @@ import { AnimeCardSkeleton } from "@/components/cards/AnimeCardSkeleton";
 import { ErrorCard } from "@/components/ErrorCard";
 import { Button } from "@/components/ui/button";
 import { useDebounce } from "@/hooks/useDebounce";
+import { SORT_OPTIONS, TAGS } from "@/lib/constants";
 import type { Anime, PageInfo } from "@/types/anime";
 
 export default function SearchPage() {
@@ -140,6 +141,48 @@ function SearchPageInner() {
         />
 
         <div className="space-y-4 min-w-0">
+          {/* Active filter chips */}
+          {(() => {
+            const sortLabel = SORT_OPTIONS.find((s) => s.value === sort)?.label;
+            const tagLabels = selectedTags.map(
+              (t) => TAGS.find((tag) => tag.value === t)?.label ?? t,
+            );
+            const chips: { label: string; onRemove: () => void }[] = [];
+            if (debouncedQuery) chips.push({ label: `"${debouncedQuery}"`, onRemove: () => setQuery("") });
+            if (format) chips.push({ label: format, onRemove: () => setFormat("") });
+            if (sortLabel && sort !== "POPULARITY_DESC") chips.push({ label: `Sort: ${sortLabel}`, onRemove: () => setSort("POPULARITY_DESC") });
+            selectedGenres.forEach((g) => chips.push({ label: g, onRemove: () => handleGenreToggle(g) }));
+            tagLabels.forEach((label, i) => chips.push({ label, onRemove: () => handleTagToggle(selectedTags[i]) }));
+
+            if (chips.length === 0) return null;
+            return (
+              <div className="flex flex-wrap items-center gap-2">
+                {chips.map((chip, idx) => (
+                  <button
+                    key={idx}
+                    onClick={chip.onRemove}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-xan-card border border-xan-border hover:border-xan-crimson/40 hover:bg-xan-crimson/10 hover:text-xan-crimson text-foreground/80 transition-colors"
+                  >
+                    {chip.label}
+                    <X className="h-3 w-3" />
+                  </button>
+                ))}
+                <button
+                  onClick={() => {
+                    setQuery("");
+                    setFormat("");
+                    setSort("POPULARITY_DESC");
+                    setSelectedGenres([]);
+                    setSelectedTags([]);
+                  }}
+                  className="text-xs text-muted-foreground hover:text-xan-crimson transition-colors ml-1"
+                >
+                  Clear all
+                </button>
+              </div>
+            );
+          })()}
+
           {error ? (
             <ErrorCard message="Search failed. Please try again." />
           ) : loading ? (

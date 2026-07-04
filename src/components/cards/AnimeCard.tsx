@@ -1,12 +1,13 @@
 "use client";
 
 // components/cards/AnimeCard.tsx
-// ✅ "use client" — motion hover animations
+// ✅ Uses CSS-only .card-enter animation (globals.css) instead of motion/react
+//    whileInView — avoids one IntersectionObserver per card on grid pages.
 
 import Image from "next/image";
 import Link from "next/link";
-import { motion } from "motion/react";
 import { Star, Play, Clock } from "lucide-react";
+import { BookmarkButton } from "@/components/cards/BookmarkButton";
 import {
   getTitle,
   formatScore,
@@ -29,16 +30,9 @@ export function AnimeCard({ anime, index = 0, priority = false }: AnimeCardProps
   const color = anime.coverImage?.color ?? "#e94560";
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-50px" }}
-      transition={{
-        duration: 0.4,
-        delay: Math.min(index * 0.03, 0.3),
-        ease: [0.25, 0.4, 0.25, 1],
-      }}
-      className="group relative"
+    <div
+      className="group relative card-enter"
+      style={{ "--card-index": index } as React.CSSProperties}
     >
       <Link href={`/anime/${anime.id}`} className="block">
         <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-xan-card border border-xan-border transition-all duration-300 group-hover:border-xan-crimson/40 group-hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
@@ -55,8 +49,8 @@ export function AnimeCard({ anime, index = 0, priority = false }: AnimeCardProps
           {/* Gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-80 group-hover:opacity-95 transition-opacity" />
 
-          {/* Top badges */}
-          <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-2">
+          {/* Top badges (left side only — bookmark lives top-right) */}
+          <div className="absolute top-2 left-2 flex items-start gap-2 pointer-events-none">
             {anime.averageScore != null && (
               <div className="flex items-center gap-1 bg-black/70 backdrop-blur-sm rounded-full px-2 py-0.5 text-xs font-semibold text-white">
                 <Star className="h-3 w-3 text-yellow-400 fill-yellow-400" />
@@ -68,6 +62,16 @@ export function AnimeCard({ anime, index = 0, priority = false }: AnimeCardProps
                 Movie
               </div>
             )}
+          </div>
+
+          {/* Bookmark button (top-right, hover-reveal on desktop) */}
+          <div className="absolute top-1.5 right-1.5 z-20 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+            <BookmarkButton
+              animeId={anime.id}
+              title={title}
+              coverImage={image}
+              size="sm"
+            />
           </div>
 
           {/* Hover play button */}
@@ -103,6 +107,6 @@ export function AnimeCard({ anime, index = 0, priority = false }: AnimeCardProps
           />
         </div>
       </Link>
-    </motion.div>
+    </div>
   );
 }

@@ -1,6 +1,10 @@
 // lib/anilist.ts
 // ✅ Defensive API client — bounded retry + AbortController + per-item Zod validation
+// ✅ React `cache()` wrapper dedupes identical calls within a single server render
+//    pass (e.g. home page calls fetchTrending(1,10) twice — hero + top10 — now hits
+//    AniList only once).
 
+import { cache } from "react";
 import {
   AnimeSchema,
   PageInfoSchema,
@@ -131,93 +135,96 @@ async function fetchList(
   };
 }
 
-export async function fetchTrending(
-  page = 1,
-  perPage = 20,
-): Promise<FetchResult | null> {
-  return fetchList(TRENDING_QUERY, { page, perPage });
-}
+export const fetchTrending = cache(
+  async (page = 1, perPage = 20): Promise<FetchResult | null> => {
+    return fetchList(TRENDING_QUERY, { page, perPage });
+  },
+);
 
-export async function fetchPopular(
-  page = 1,
-  perPage = 20,
-): Promise<FetchResult | null> {
-  return fetchList(POPULAR_QUERY, { page, perPage });
-}
+export const fetchPopular = cache(
+  async (page = 1, perPage = 20): Promise<FetchResult | null> => {
+    return fetchList(POPULAR_QUERY, { page, perPage });
+  },
+);
 
-export async function fetchSearch(
-  search: string,
-  page = 1,
-  perPage = 20,
-  genres?: string[],
-  sort?: string,
-  tags?: string[],
-  format?: string,
-): Promise<FetchResult | null> {
-  return fetchList(SEARCH_QUERY, {
-    search: search || null,
-    page,
-    perPage,
-    genres: genres && genres.length > 0 ? genres : undefined,
-    tags: tags && tags.length > 0 ? tags : undefined,
-    sort: sort ? [sort] : undefined,
-    format: format || undefined,
-  });
-}
+export const fetchSearch = cache(
+  async (
+    search: string,
+    page = 1,
+    perPage = 20,
+    genres?: string[],
+    sort?: string,
+    tags?: string[],
+    format?: string,
+  ): Promise<FetchResult | null> => {
+    return fetchList(SEARCH_QUERY, {
+      search: search || null,
+      page,
+      perPage,
+      genres: genres && genres.length > 0 ? genres : undefined,
+      tags: tags && tags.length > 0 ? tags : undefined,
+      sort: sort ? [sort] : undefined,
+      format: format || undefined,
+    });
+  },
+);
 
-export async function fetchAnimeDetail(
-  id: number,
-): Promise<FetchDetailResult | null> {
-  const json = await fetchFromAniList(ANIME_DETAIL_QUERY, { id });
-  if (!json) return null;
+export const fetchAnimeDetail = cache(
+  async (id: number): Promise<FetchDetailResult | null> => {
+    const json = await fetchFromAniList(ANIME_DETAIL_QUERY, { id });
+    if (!json) return null;
 
-  const raw = (json as any)?.data?.Media;
-  if (!raw) {
-    console.error("[AniList] Detail response missing Media field");
-    return { data: null };
-  }
+    const raw = (json as any)?.data?.Media;
+    if (!raw) {
+      console.error("[AniList] Detail response missing Media field");
+      return { data: null };
+    }
 
-  const parsed = AnimeDetailSchema.safeParse(raw);
-  if (!parsed.success) {
-    console.error("[AniList] Detail validation failed:", parsed.error.issues);
-    return { data: null };
-  }
+    const parsed = AnimeDetailSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.error("[AniList] Detail validation failed:", parsed.error.issues);
+      return { data: null };
+    }
 
-  return { data: parsed.data };
-}
+    return { data: parsed.data };
+  },
+);
 
-export async function fetchByGenre(
-  genre: string,
-  page = 1,
-  perPage = 20,
-): Promise<FetchResult | null> {
-  if (isTag(genre)) {
+export const fetchByGenre = cache(
+  async (
+    genre: string,
+    page = 1,
+    perPage = 20,
+  ): Promise<FetchResult | null> => {
+    if (isTag(genre)) {
+      return fetchList(SEARCH_QUERY, {
+        search: null,
+        page,
+        perPage,
+        tags: [genre],
+      });
+    }
     return fetchList(SEARCH_QUERY, {
       search: null,
       page,
       perPage,
-      tags: [genre],
+      genres: [genre],
     });
-  }
-  return fetchList(SEARCH_QUERY, {
-    search: null,
-    page,
-    perPage,
-    genres: [genre],
-  });
-}
+  },
+);
 
 export interface AiringScheduleResult {
   data: AiringSchedule[];
   pageInfo: PageInfo;
 }
 
-export async function fetchAiringSchedule(
-  startTime: number,
-  endTime: number,
-  page = 1,
-  perPage = 50,
-): Promise<AiringScheduleResult | null> {
+export const fetchAiringSchedule = cache(
+  async (
+    startTime: number,
+    endTime: number,
+    page = 1,
+    perPage = 50,
+  ): Promise<AiringScheduleResult | null> => {
   const json = await fetchFromAniList(AIRING_SCHEDULE_QUERY, {
     page,
     perPage,
@@ -252,4 +259,5 @@ export async function fetchAiringSchedule(
           total: null,
         },
   };
-}
+  },
+);
