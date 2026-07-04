@@ -97,6 +97,24 @@ export function StreamPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPip, setIsPip] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  // ✅ Controls + cursor auto-hide (3s idle when playing)
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [cursorVisible, setCursorVisible] = useState(true);
+  // ✅ Mobile double-tap to seek ±10s
+  const [tapRipple, setTapRipple] = useState<{ id: number; side: "left" | "right" } | null>(null);
+
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTapRef = useRef<{ time: number; side: "left" | "right" }>({ time: 0, side: "left" });
+  const suppressDblClickRef = useRef(false);
+  const playingRef = useRef(false);
+  const showSpeedMenuRef = useRef(false);
+  const showShortcutsRef = useRef(false);
+
+  useEffect(() => {
+    playingRef.current = playing;
+    showSpeedMenuRef.current = showSpeedMenu;
+    showShortcutsRef.current = showShortcuts;
+  }, [playing, showSpeedMenu, showShortcuts]);
 
   useEffect(() => {
     onEpisodeEndRef.current = onEpisodeEnd;
@@ -331,6 +349,84 @@ export function StreamPlayer({
     seekTo(targetTime);
   }, [seekTo, skipIntroOffset]);
 
+  // ──────────────────────────────────────────────────────────────
+  // Controls + cursor auto-hide (3s idle when playing)
+  // ──────────────────────────────────────────────────────────────
+  const showControls = useCallback(() => {
+    setControlsVisible(true);
+    setCursorVisible(true);
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleHide = useCallback(() => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      const shouldHide = playingRef.current && !showSpeedMenuRef.current && !showShortcutsRef.current;
+      if (shouldHide) {
+        setControlsVisible(false);
+        setCursorVisible(false);
+      }
+    }, 3000);
+  }, []);
+
+  const onContainerMouseMove = useCallback(() => {
+    showControls();
+    scheduleHide();
+  }, [showControls, scheduleHide]);
+
+  // ──────────────────────────────────────────────────────────────
+  // Mobile double-tap to seek ±10s (left/right half)
+  // ──────────────────────────────────────────────────────────────
+  const onVideoTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    if (showSpeedMenuRef.current || showShortcutsRef.current) return;
+    const touch = e.touches[0];
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const side: "left" | "right" = x < rect.width / 2 ? "left" : "right";
+    const now = Date.now();
+
+    if (
+      now - lastTapRef.current.time < 300 &&
+      lastTapRef.current.side === side
+    ) {
+      e.preventDefault();
+      const delta = side === "left" ? -10 : 10;
+      seekBy(delta);
+      setTapRipple({ id: Date.now(), side });
+      lastTapRef.current = { time: 0, side };
+      suppressDblClickRef.current = true;
+      setTimeout(() => { suppressDblClickRef.current = false; }, 400);
+    } else {
+      lastTapRef.current = { time: now, side };
+    }
+  }, [seekBy]);
+
+  // ✅ Click to pause WITHOUT showing controls (YouTube-style).
+  //    Controls + cursor only reappear on mouse movement.
+  const onVideoClick = useCallback(() => {
+    if (showSpeedMenuRef.current) { setShowSpeedMenu(false); return; }
+    if (showShortcutsRef.current) { setShowShortcuts(false); return; }
+    togglePlay();
+  }, [togglePlay]);
+
+  const onVideoDoubleClick = useCallback(() => {
+    if (suppressDblClickRef.current) return;
+    if (showSpeedMenuRef.current || showShortcutsRef.current) return;
+    toggleFullscreen();
+  }, [toggleFullscreen]);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -459,16 +555,29 @@ export function StreamPlayer({
   return (
     <div
       ref={containerRef}
-      className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border group"
+      className={`relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border group select-none ${cursorVisible ? "" : "cursor-none"}`}
+      onMouseMove={onContainerMouseMove}
     >
       <video
         ref={videoRef}
         poster={posterUrl}
         className="w-full h-full object-contain"
         playsInline
-        onClick={togglePlay}
+        onClick={onVideoClick}
+        onDoubleClick={onVideoDoubleClick}
+        onTouchStart={onVideoTouchStart}
         title={title}
       />
+
+      {/* Mobile double-tap ripple */}
+      {tapRipple && (
+        <div
+          key={tapRipple.id}
+          className={`absolute top-1/2 ${tapRipple.side === "left" ? "left-1/4" : "right-1/4"} -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30`}
+        >
+          <div className="w-24 h-24 rounded-full bg-white/20 animate-tap-ripple" />
+        </div>
+      )}
 
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 pointer-events-none">
@@ -486,7 +595,7 @@ export function StreamPlayer({
         </button>
       )}
 
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-4 pb-3 pt-8 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-4 pb-3 pt-8 transition-opacity ${controlsVisible ? "opacity-100" : "opacity-0"}`}>
         <input
           type="range"
           min={0}

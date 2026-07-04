@@ -326,6 +326,10 @@ export function YouTubeStylePlayer({
   const endFiredRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapRef = useRef<{ time: number; side: "left" | "right" }>({ time: 0, side: "left" });
+  // ✅ Suppresses the dblclick event that fires after a touch double-tap seeks.
+  //    Without this, mobile double-tap-to-seek ALSO triggers fullscreen toggle
+  //    (because the browser synthesizes a dblclick after two touch taps).
+  const suppressDblClickRef = useRef(false);
   // ✅ Track which tier we've already logged for this stream — prevents
   // duplicate analytics events when the player retries within the same load.
   const tierLoggedRef = useRef<string | null>(null);
@@ -352,6 +356,9 @@ export function YouTubeStylePlayer({
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("main");
   const [controlsVisible, setControlsVisible] = useState(true);
+  // ✅ Cursor auto-hide: when controls hide, the cursor also hides (cursor-none).
+  //    Returns on any mouse move. Mirrors YouTube/Netflix behavior.
+  const [cursorVisible, setCursorVisible] = useState(true);
   const [timeMode, setTimeMode] = useState<TimeMode>("duration");
   const [seekHover, setSeekHover] = useState<{ x: number; t: number } | null>(null);
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null);
@@ -835,6 +842,7 @@ export function YouTubeStylePlayer({
   // ──────────────────────────────────────────────────────────────
   const showControls = useCallback(() => {
     setControlsVisible(true);
+    setCursorVisible(true);
     if (hideTimerRef.current) {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
@@ -851,14 +859,16 @@ export function YouTubeStylePlayer({
       // values — prevents stale closure from hiding controls while a menu
       // is open (which would make the settings panel disappear/become
       // unclickable until the user moved the mouse again).
-      setControlsVisible((visible) => {
-        if (!playingRef.current || showSettingsRef.current || showShortcutsRef.current) return visible;
-        return false;
-      });
+      const shouldHide = playingRef.current && !showSettingsRef.current && !showShortcutsRef.current;
+      if (shouldHide) {
+        setControlsVisible(false);
+        setCursorVisible(false);
+      }
     }, 3000);
   }, []);
 
   const onContainerMouseMove = useCallback(() => {
+    // ✅ Mouse movement always reveals controls + cursor, then schedules hide.
     showControls();
     scheduleHide();
   }, [showControls, scheduleHide]);
@@ -1137,6 +1147,9 @@ export function YouTubeStylePlayer({
       triggerSeekFeedback(delta);
       setTapRipple({ id: Date.now(), side });
       lastTapRef.current = { time: 0, side };
+      // ✅ Suppress the synthesized dblclick event so it doesn't toggle fullscreen
+      suppressDblClickRef.current = true;
+      setTimeout(() => { suppressDblClickRef.current = false; }, 400);
     } else {
       lastTapRef.current = { time: now, side };
     }
@@ -1149,6 +1162,10 @@ export function YouTubeStylePlayer({
   // the video area should CLOSE the panel — not toggle playback. Without this
   // guard, mobile users tapping the video to dismiss the settings sheet would
   // accidentally pause/resume the video.
+  //
+  // ✅ Issue fix: Click to pause should NOT show controls — they reappear only
+  //    when the user moves the mouse. This mirrors YouTube's behavior where
+  //    clicking the video pauses it silently without flashing the controls.
   const onVideoClick = useCallback(() => {
     if (showSettingsRef.current) {
       closeSettings();
@@ -1159,11 +1176,14 @@ export function YouTubeStylePlayer({
       return;
     }
     togglePlay();
-    showControls();
-    scheduleHide();
-  }, [togglePlay, showControls, scheduleHide, closeSettings]);
+    // ✅ Do NOT call showControls() here — click should pause silently.
+    //    Controls (and cursor) only reappear on mouse movement.
+  }, [togglePlay, closeSettings]);
 
   const onVideoDoubleClick = useCallback(() => {
+    // ✅ Suppress fullscreen toggle if this dblclick was synthesized by a
+    //    touch double-tap (which already handled the seek ±10s).
+    if (suppressDblClickRef.current) return;
     // Don't toggle fullscreen if a menu is open (let the single-click close it first)
     if (showSettingsRef.current || showShortcutsRef.current) return;
     toggleFullscreen();
@@ -1328,7 +1348,7 @@ export function YouTubeStylePlayer({
   return (
     <div
       ref={containerRef}
-      className="relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border group select-none"
+      className={`relative w-full aspect-video bg-black rounded-lg overflow-hidden border border-xan-border group select-none ${cursorVisible ? "" : "cursor-none"}`}
       onMouseMove={onContainerMouseMove}
       onMouseLeave={onContainerMouseLeave}
     >
