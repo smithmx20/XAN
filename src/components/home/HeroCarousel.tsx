@@ -80,7 +80,7 @@ export function HeroCarousel({ anime, onActiveChange }: HeroCarouselProps) {
 
   return (
     <section
-      className="relative w-full h-[78vh] min-h-[520px] max-h-[760px] overflow-hidden"
+      className="relative w-full h-[58vh] min-h-[420px] max-h-[560px] md:h-[78vh] md:min-h-[520px] md:max-h-[760px] overflow-hidden"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
@@ -92,14 +92,17 @@ export function HeroCarousel({ anime, onActiveChange }: HeroCarouselProps) {
       aria-roledescription="carousel"
       aria-label="Featured anime"
     >
-      {/* ─── Blurred background slide (heavy blur) ─── */}
+      {/* ─── Blurred background slide ─── */}
+      {/* ✅ Use mode="popLayout" + short transition to prevent flicker on
+             slide change. The old slide exits while the new one enters
+             simultaneously (crossfade), so there's no empty gap. */}
       <AnimatePresence mode="sync">
         <motion.div
           key={current.id}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.8, ease: "easeInOut" }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
           className="absolute inset-0"
         >
           <Image
@@ -130,19 +133,22 @@ export function HeroCarousel({ anime, onActiveChange }: HeroCarouselProps) {
       {/* ═══════════════════════════════════════════════════════════════════
           MOBILE LAYOUT (< md)
           One big poster card centered, ALL text inside it, arrows outside.
-          ✅ No nested <a> tags — the card is a <div>, NOT a <Link>. Only the
-             poster image and CTAs are links. Tapping the poster (not on a
-             button) navigates to the detail page via a separate overlay link.
+          ✅ No nested <a> tags — the card is a <div>, NOT a <Link>.
+          ✅ Uses mode="sync" (crossfade) instead of mode="wait" to prevent
+             the flicker/gap that happens when the old card exits before the
+             new one enters.
+          ✅ Reduced section height + tighter padding to eliminate wasted
+             space below the card.
          ═══════════════════════════════════════════════════════════════════ */}
-      <div className="md:hidden relative h-full flex items-center justify-center px-14 pt-16 pb-20">
-        <AnimatePresence mode="wait">
+      <div className="md:hidden relative h-full flex items-center justify-center px-14 pt-14 pb-12">
+        <AnimatePresence mode="sync">
           <motion.div
             key={current.id}
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-            className="relative w-full max-w-[340px] aspect-[3/4] rounded-2xl overflow-hidden glass-strong p-1.5 shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="relative w-full max-w-[320px] aspect-[3/4] rounded-2xl overflow-hidden glass-strong p-1.5 shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
           >
             <div className="relative w-full h-full rounded-xl overflow-hidden group">
               <Image
