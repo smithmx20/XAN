@@ -170,37 +170,22 @@ const SORT_OPTIONS: { value: Settings["defaultSort"]; label: string }[] = [
   { value: "oldest", label: "Oldest first" },
 ];
 
-// ✅ Known source names — used in the Source filters section.
-// These are the sourceName values that appear in the stream API response.
-// ✅ Bug fix: added ALL AllAnime source names (S-mp4, Default, Sak, Wixmp,
-// Luf-Mp4, Fm-hls, Vn-hls, Viz, Mycloud, allanime-clock) — previously these
-// were missing, so users couldn't toggle them off in the settings page.
-const KNOWN_SOURCES: { name: string; type: "mp4" | "hls" | "iframe"; desc: string }[] = [
-  { name: "Yt-mp4", type: "mp4", desc: "AllAnime — tools.fast4speed.rsvp. Blocks CF, uses Vercel proxy." },
-  { name: "S-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream. May contain multiple quality URLs." },
-  { name: "Sl-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (Sl variant). Internal stream resolution." },
-  { name: "S1-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (S1 variant). Internal stream resolution." },
-  { name: "S2-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (S2 variant). Internal stream resolution." },
-  { name: "S3-mp4", type: "mp4", desc: "AllAnime — clock.json MP4 stream (S3 variant). Internal stream resolution." },
-  { name: "Ss-Hls", type: "hls", desc: "AllAnime — clock.json HLS stream. Internal stream resolution." },
-  { name: "Mp4", type: "mp4", desc: "AllAnime — mp4upload.com. Download page, may not play directly." },
-  { name: "Ak", type: "mp4", desc: "AllAnime — Ak stream. May work through CF Worker." },
-  { name: "Default", type: "mp4", desc: "AllAnime — default clock.json source. Internal stream resolution." },
-  { name: "Sak", type: "mp4", desc: "AllAnime — Sak clock.json source. Internal stream resolution." },
-  { name: "Wixmp", type: "mp4", desc: "AllAnime — Wixmp clock.json source. Internal stream resolution." },
-  { name: "Luf-Mp4", type: "mp4", desc: "AllAnime — Luf-Mp4 clock.json source. Internal stream resolution." },
-  { name: "Fm-hls", type: "hls", desc: "AllAnime — FileMoon HLS stream. Scrape-based extraction." },
-  { name: "Vn-hls", type: "hls", desc: "AllAnime — VidNest HLS stream. Scrape-based extraction." },
-  { name: "Viz", type: "mp4", desc: "AllAnime — Viz stream. Scrape-based extraction." },
-  { name: "Mycloud", type: "mp4", desc: "AllAnime — MyCloud stream. Scrape-based extraction." },
-  { name: "allanime-clock", type: "mp4", desc: "AllAnime — internal clock.json result. Auto-generated name." },
-  { name: "Sw", type: "iframe", desc: "AllAnime — StreamWish embed. 0 Vercel BW (iframe)." },
-  { name: "Ok", type: "iframe", desc: "AllAnime — Ok.ru embed. 0 Vercel BW (iframe)." },
-  { name: "Uni", type: "iframe", desc: "AllAnime — Uni embed (allanime.uns.bio). 0 Vercel BW." },
+// ✅ Known sources — the actual sources that appear in the stream API response
+// as of mid-2026 (after the AllAnime crypto migration to mkissa.to).
+// Each entry is either a sourceName (e.g., "Fm-Hls") or a provider ID
+// (e.g., "gogoanime", "pahe") that can be toggled on/off.
+const KNOWN_SOURCES: { name: string; type: "mp4" | "hls" | "iframe"; desc: string; isProvider?: boolean }[] = [
+  // ─── AllAnime sources (via CF Worker — direct crypto) ───
+  { name: "Mp4", type: "mp4", desc: "AllAnime — mp4upload.com direct MP4. Plays in custom player with seeking." },
+  { name: "Fm-Hls", type: "iframe", desc: "AllAnime — FileMoon HLS embed (bysekoze.com). JS-rendered player." },
+  { name: "Vn-Hls", type: "iframe", desc: "AllAnime — VidNest HLS embed (vidnest.io). JS-rendered player." },
+  { name: "Ok", type: "iframe", desc: "AllAnime — Ok.ru video embed. May show captcha on first visit." },
+  { name: "Uni", type: "iframe", desc: "AllAnime — Uni embed (allanime.uns.bio). JS-rendered player." },
+  // ─── Other providers ───
   { name: "Zen", type: "iframe", desc: "FlixCloud embed. Often blocked by Cloudflare." },
-  { name: "Koto", type: "iframe", desc: "MegaPlay embed. 0 Vercel BW (iframe)." },
-  { name: "Pahe-Kiwi-Stream", type: "iframe", desc: "AnimePahe — download page (iframe). Shows download button." },
-  { name: "Gogoanime", type: "iframe", desc: "Gogoanime.fi embed (iframe). Loads gogoanime's own player. 0 Vercel BW." },
+  { name: "Koto", type: "iframe", desc: "MegaPlay embed. 0 Vercel BW (iframe). Good for subbed anime." },
+  { name: "pahe", type: "iframe", desc: "AnimePahe — download page (iframe). Shows download button.", isProvider: true },
+  { name: "gogoanime", type: "iframe", desc: "Gogoanime.fi embed (iframe). Loads gogoanime's own player.", isProvider: true },
 ];
 
 // ─── Page ───────────────────────────────────────────────────────────────────
@@ -1145,7 +1130,7 @@ export default function SettingsPage() {
               <div className="space-y-1.5">
                 {settings.providerPriority.map((providerId, idx) => {
                   const info = providerId === "allanime"
-                    ? { name: "AllAnime", desc: "Primary — Yt-mp4, Mp4, StreamWish, Ok.ru" }
+                    ? { name: "AllAnime", desc: "Mp4 (direct MP4), Fm-Hls, Vn-Hls, Ok, Uni (iframe)" }
                     : providerId === "zen"
                       ? { name: "Zen", desc: "FlixCloud HLS embed (often blocked)" }
                       : providerId === "koto"

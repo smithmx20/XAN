@@ -219,12 +219,23 @@ function readSettings(): Settings {
       }
     }
     if (storedVersion < 6) {
-      // v6: Gogoanime and AnimePahe disabled by default — less reliable iframe
-      // sources. Add "gogoanime" and "pahe" to disabledSources if the user
-      // hasn't already customized their disabled list.
+      // v6: Source list updated to current sources (post-mkissa.to migration).
+      // - Gogoanime and AnimePahe disabled by default
+      // - Old source names (Yt-mp4, S-mp4, Default, Sak, Wixmp, Luf-Mp4, etc.)
+      //   are removed from disabledSources — they no longer exist
+      const OLD_SOURCE_NAMES = [
+        "Yt-mp4", "S-mp4", "Sl-mp4", "S1-mp4", "S2-mp4", "S3-mp4", "Ss-Hls",
+        "Ak", "Default", "Sak", "Wixmp", "Luf-Mp4", "Fm-hls", "Vn-hls",
+        "Viz", "Mycloud", "allanime-clock", "Sw",
+        "Pahe-Kiwi-Stream", "Pahe-kiwi-stream", "Gogoanime",
+      ];
       if (!Array.isArray(merged.disabledSources) || merged.disabledSources.length === 0) {
         merged.disabledSources = ["gogoanime", "pahe"];
       } else {
+        // Remove old source names that no longer exist
+        merged.disabledSources = merged.disabledSources.filter(
+          (n) => !OLD_SOURCE_NAMES.includes(n),
+        );
         // Add the provider IDs if not already present
         for (const pid of ["gogoanime", "pahe"]) {
           if (!merged.disabledSources.includes(pid)) {
