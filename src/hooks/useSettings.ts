@@ -138,6 +138,10 @@ export const DEFAULT_SETTINGS: Settings = {
   disabledSources: [],
   pinnedSource: null,
   providerPriority: ["isekai2nd", "allanime", "zen", "koto", "pahe", "gogoanime"],
+  // NOTE: isekai2nd/allanime are kept first because the CF Worker (v4) now
+  // navigates to mkissa.to (no Cloudflare challenge) instead of allmanga.to.
+  // If the Worker is deployed, AllAnime sources should work again.
+  // Other providers (zen, koto, pahe, gogoanime) are fallbacks.
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",

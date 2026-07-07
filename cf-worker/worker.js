@@ -187,8 +187,19 @@ function setCached(key, sources) {
 //   9. Our interceptor captures the response, decrypts tobeparsed
 //  10. Close browser, cache sources, return JSON
 //
+// If the browser approach fails (CF challenge doesn't pass, Turnstile doesn't
+// auto-solve, etc.), we fall back to a direct API call from the Worker. The
+// Worker's IP is Cloudflare's, which may be more trusted than Vercel's.
+//
 // Time budget: 60s max per browser session (Cloudflare limit). Typical
 // execution: 20-40s.
+
+// Helper: convert any error to a string (handles non-Error throws)
+function errToString(err) {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try { return JSON.stringify(err); } catch { return String(err); }
+}
 
 async function fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translationType, env) {
   const cacheKey = `${showId}:${episodeString}:${translationType}`;
@@ -217,7 +228,7 @@ async function fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translation
     return {
       sources: null,
       cached: false,
-      error: `Failed to launch browser: ${err.message}. You may have hit the 10 concurrent session limit — retry in a moment.`,
+      error: `Failed to launch browser: ${errToString(err)}. You may have hit the 10 concurrent session limit — retry in a moment.`,
     };
   }
 
@@ -232,19 +243,31 @@ async function fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translation
 
     let sources = null;
     let graphQLCallCount = 0;
+    let lastGraphQLError = null;
 
     // Intercept AllAnime API responses
+    // mkissa.to's SvelteKit app POSTs to https://api.allanime.day/api (not /api/graphql)
+    // Match any request to api.allanime.day that could be a GraphQL call
     page.on("response", async (response) => {
       const url = response.url();
       if (!url.includes("api.allanime.day")) return;
-      if (!url.includes("/api?") && !url.includes("/api/graphql")) return;
+      // Skip authconfigs, bootstrap, and other non-GraphQL endpoints
+      if (url.includes("/authconfigs") || url.includes("/client-crypto/")) return;
+      // Match /api, /api?, /api/graphql — any of these could carry the episode response
+      if (!url.includes("/api") && !url.includes("/graphql")) return;
 
       graphQLCallCount++;
-      console.log(`[worker] GraphQL call #${graphQLCallCount}: ${response.status()} ${url.slice(0, 80)}...`);
+      console.log(`[worker] GraphQL call #${graphQLCallCount}: ${response.status()} ${url.slice(0, 100)}...`);
 
       try {
         const text = await response.text();
         const json = JSON.parse(text);
+
+        // Check for errors
+        if (json.errors) {
+          lastGraphQLError = json.errors[0]?.message || "unknown GraphQL error";
+          console.log(`[worker] GraphQL error: ${lastGraphQLError}`);
+        }
 
         // Extract sourceUrls from tobeparsed (encrypted) or cleartext
         if (json.data?.tobeparsed) {
@@ -258,35 +281,63 @@ async function fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translation
           console.log(`[worker] got cleartext sourceUrls — ${sources.length} sources`);
         }
       } catch (e) {
-        // Not JSON or parse error — ignore
+        console.log(`[worker] response parse error: ${errToString(e)}`);
       }
     });
 
-    // Navigate to the episode page
-    const episodeUrl = `https://allmanga.to/bangumi/${showId}/p-${episodeString}-${translationType}`;
+    // Navigate to the episode page on mkissa.to (NOT allmanga.to)
+    // mkissa.to is AllAnime's new SvelteKit frontend. Unlike allmanga.to which
+    // has Cloudflare's interactive "Just a moment..." challenge that blocks
+    // Browser Rendering, mkissa.to returns 200 directly — no challenge!
+    // The SvelteKit app uses a new crypto scheme (__aaCrypto.partB embedded in
+    // the page HTML) that replaces the Turnstile captcha entirely. The app
+    // encrypts the GraphQL request with partB-derived key, the server returns
+    // tobeparsed encrypted with the SAME old key (sha256("Xot36i3lK3:v1"))
+    // which our decryptTobeparsed() already handles.
+    const episodeUrl = `https://mkissa.to/watch/${showId}/p-${episodeString}-${translationType}`;
     console.log(`[worker] navigating to ${episodeUrl}`);
 
     try {
+      // Use networkidle2 instead of domcontentloaded — waits for SvelteKit
+      // to finish booting and making API calls
       await page.goto(episodeUrl, {
-        waitUntil: "domcontentloaded",
+        waitUntil: "networkidle2",
         timeout: 30000,
       });
     } catch (err) {
-      console.warn(`[worker] initial goto error (may still be on CF challenge): ${err.message}`);
+      console.warn(`[worker] initial goto error: ${errToString(err)}`);
+      // Try again with domcontentloaded as fallback
+      try {
+        await page.goto(episodeUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 20000,
+        });
+      } catch (err2) {
+        console.warn(`[worker] fallback goto also failed: ${errToString(err2)}`);
+      }
     }
 
-    // Wait for Cloudflare challenge to resolve (title changes from "Just a moment...")
+    // mkissa.to doesn't have Cloudflare challenge, but check page title anyway
+    let challengePassed = false;
     try {
-      await page.waitForFunction(
-        () => document.title !== "Just a moment..." && !document.title.includes("Just a moment"),
-        { timeout: 30000 }
-      );
-      console.log("[worker] Cloudflare challenge passed — page title:", await page.title());
+      const title = await page.title();
+      if (title && !title.includes("Just a moment")) {
+        challengePassed = true;
+        console.log(`[worker] page loaded — title: "${title}"`);
+      } else {
+        // Wait for challenge to clear (unlikely on mkissa.to, but just in case)
+        await page.waitForFunction(
+          () => document.title !== "Just a moment..." && !document.title.includes("Just a moment"),
+          { timeout: 15000 }
+        );
+        challengePassed = true;
+        console.log("[worker] challenge cleared — page title:", await page.title());
+      }
     } catch (err) {
-      console.warn("[worker] Cloudflare challenge may not have passed — title:", await page.title());
+      console.warn("[worker] page title check failed:", errToString(err));
     }
 
-    // Wait for sourceUrls to be captured (Vue app auto-fetches them after Turnstile solves)
+    // Wait for sourceUrls to be captured (SvelteKit app auto-fetches them on load)
     const maxWaitMs = 25000;
     const startWait = Date.now();
     while (!sources && Date.now() - startWait < maxWaitMs) {
@@ -300,24 +351,27 @@ async function fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translation
       return { sources, cached: false, error: null, durationMs, graphQLCalls: graphQLCallCount };
     } else {
       const pageTitle = await page.title().catch(() => "unknown");
-      console.warn(`[worker] no sources captured after ${maxWaitMs}ms (${graphQLCallCount} GraphQL calls seen)`);
+      const errorMsg = `Failed to capture sources. Challenge passed: ${challengePassed}. Page title: "${pageTitle}". GraphQL calls: ${graphQLCallCount}. Last GraphQL error: ${lastGraphQLError || "none"}`;
+      console.warn(`[worker] ${errorMsg}`);
       return {
         sources: null,
         cached: false,
-        error: `Failed to capture sources — Cloudflare may have blocked the browser or Turnstile didn't auto-solve. Page title: "${pageTitle}"`,
+        error: errorMsg,
         graphQLCalls: graphQLCallCount,
+        challengePassed,
+        pageTitle,
       };
     }
   } catch (err) {
     console.error("[worker] unexpected error:", err);
-    return { sources: null, cached: false, error: err.message };
+    return { sources: null, cached: false, error: `Unexpected error: ${errToString(err)}` };
   } finally {
     // Always close the browser to free up the session slot
     if (browser) {
       try {
         await browser.close();
       } catch (e) {
-        console.warn("[worker] failed to close browser:", e.message);
+        console.warn("[worker] failed to close browser:", errToString(e));
       }
     }
   }
