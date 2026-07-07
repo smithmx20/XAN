@@ -135,7 +135,12 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultAudioMode: "sub",
   bandwidthMode: "auto",
   showSourceSwitcher: true,
-  disabledSources: [],
+  // ✅ Gogoanime and AnimePahe are disabled by default — they're iframe-based
+  // and less reliable than AllAnime (mp4upload direct MP4 + iframe embeds).
+  // Uses provider IDs ("gogoanime", "pahe") so ALL sources from these
+  // providers are filtered out, regardless of their sourceName.
+  // Users can re-enable them in Settings → Bandwidth → Source Toggles.
+  disabledSources: ["gogoanime", "pahe"],
   pinnedSource: null,
   providerPriority: ["allanime", "zen", "koto", "pahe", "gogoanime"],
   // NOTE: "isekai2nd" was removed — all AllAnime sources (via CF Worker)
@@ -151,7 +156,7 @@ export const DEFAULT_SETTINGS: Settings = {
 const STORAGE_KEY = "xan-settings";
 // ✅ Bump whenever a setting default changes in a way that should overwrite
 // the user's previously-stored value. The migration runs once per bump.
-const SETTINGS_VERSION = 5;
+const SETTINGS_VERSION = 6;
 const SETTINGS_VERSION_KEY = "xan-settings-version";
 
 function readSettings(): Settings {
@@ -210,6 +215,21 @@ function readSettings(): Settings {
         // Make sure "allanime" is in the list
         if (!merged.providerPriority.includes("allanime")) {
           merged.providerPriority = ["allanime", ...merged.providerPriority];
+        }
+      }
+    }
+    if (storedVersion < 6) {
+      // v6: Gogoanime and AnimePahe disabled by default — less reliable iframe
+      // sources. Add "gogoanime" and "pahe" to disabledSources if the user
+      // hasn't already customized their disabled list.
+      if (!Array.isArray(merged.disabledSources) || merged.disabledSources.length === 0) {
+        merged.disabledSources = ["gogoanime", "pahe"];
+      } else {
+        // Add the provider IDs if not already present
+        for (const pid of ["gogoanime", "pahe"]) {
+          if (!merged.disabledSources.includes(pid)) {
+            merged.disabledSources.push(pid);
+          }
         }
       }
     }

@@ -96,7 +96,14 @@ export function VideoPlayer({
     }
     const disabled = settings.disabledSources;
     if (disabled.length === 0) return allSourcesRaw;
-    return allSourcesRaw.filter((s) => !disabled.includes(s.sourceName ?? ""));
+    // ✅ Filter by exact sourceName match OR by provider match.
+    // This lets us disable ALL sources from a provider (e.g., "gogoanime",
+    // "pahe") without knowing every dynamic sourceName (Pahe-Kiwi-Stream, etc.)
+    return allSourcesRaw.filter((s) => {
+      const name = s.sourceName ?? "";
+      const provider = s.provider ?? "";
+      return !disabled.includes(name) && !disabled.includes(provider);
+    });
   }, [allSourcesRaw, settings.disabledSources, settings.pinnedSource]);
   // ✅ Which source index we're currently trying (advances on tier failure)
   const [sourceIdx, setSourceIdx] = useState(0);
@@ -396,7 +403,11 @@ export function VideoPlayer({
           } else {
             const disabled = currentSettings.disabledSources;
             enabled = disabled.length > 0
-              ? sortedSources.filter((s) => !disabled.includes(s.sourceName ?? ""))
+              ? sortedSources.filter((s) => {
+                  const name = s.sourceName ?? "";
+                  const provider = s.provider ?? "";
+                  return !disabled.includes(name) && !disabled.includes(provider);
+                })
               : sortedSources;
           }
 
