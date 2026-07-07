@@ -8,11 +8,10 @@
 #      - Go to https://dash.cloudflare.com/profile/api-tokens
 #      - Click "Create Token" → "Edit Cloudflare Workers" template → "Continue to summary"
 #      - Under "Account Resources", select your account
-#      - Under "Worker Resources", select "xan-stream-proxy" (or "All workers")
 #      - Click "Create Token" → COPY the token (you won't see it again)
 #
 #   2. Add the token to GitHub as a secret:
-#      - Go to https://github.com/sundeepyt2/XAN/settings/secrets/actions
+#      - Go to https://github.com/<your-username>/XAN/settings/secrets/actions
 #      - Click "New repository secret"
 #      - Name: CLOUDFLARE_API_TOKEN
 #      - Value: paste the token from step 1
@@ -23,7 +22,7 @@
 #      - Add another secret: Name: CLOUDFLARE_ACCOUNT_ID, Value: your account ID
 #
 # After setup, every push to main that touches cf-worker/ triggers a deploy.
-# Watch the deploy: https://github.com/sundeepyt2/XAN/actions
+# Watch the deploy: https://github.com/<your-username>/XAN/actions
 
 name: Deploy Cloudflare Worker
 
@@ -50,11 +49,11 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: cf-worker/package-lock.json
+          cache-dependency-path: "cf-worker/package-lock.json"
 
       - name: Install dependencies
         working-directory: cf-worker
-        run: npm install
+        run: npm ci
 
       - name: Deploy with wrangler
         uses: cloudflare/wrangler-action@v3
@@ -67,8 +66,7 @@ jobs:
       - name: Verify deployment
         run: |
           echo "✅ Worker deployed successfully"
-          echo "🔗 URL: https://xan-stream-proxy.<your-subdomain>.workers.dev"
+          echo "🔗 Test URL: https://xan-stream-proxy.<your-subdomain>.workers.dev/"
           echo ""
-          echo "Test the health check:"
-          curl -s "https://xan-stream-proxy.${{ secrets.CLOUDFLARE_WORKER_SUBDOMAIN }}.workers.dev/" | head -c 500
-          echo ""
+          echo "Next: visit the URL above in your browser."
+          echo "You should see JSON with version: 4 and browserRendering: true"
