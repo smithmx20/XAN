@@ -4,6 +4,8 @@
 name = "xan-stream-proxy"
 main = "worker.js"
 compatibility_date = "2024-12-01"
+# @cloudflare/puppeteer uses node:buffer and node:stream — needs nodejs_compat
+compatibility_flags = ["nodejs_compat"]
 
 # ─── Browser Rendering binding ───────────────────────────────────────────
 # This gives the Worker access to a managed Chrome browser on Cloudflare's
@@ -18,7 +20,13 @@ compatibility_date = "2024-12-01"
 # which with 5-min caching = 100-300 episodes/day. Plenty for personal use.
 #
 # Docs: https://developers.cloudflare.com/browser-rendering/get-started/
-[[browser]]
+#
+# ⚠️ Wrangler v3 expects `browser` as a single object (not an array).
+#    Wrangler v4+ uses the `[[browser]]` array syntax. This file uses the
+#    v3-compatible form so it works with the wrangler pre-installed on
+#    GitHub Actions runners. If you upgrade to wrangler v4+, you can switch
+#    to `[[browser]]` if needed (both syntaxes work in v4).
+[browser]
 binding = "BROWSER"
 
 # Workers don't need a "routes" section — they automatically get a URL at:

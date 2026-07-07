@@ -55,6 +55,16 @@ jobs:
         working-directory: cf-worker
         run: npm ci
 
+      - name: Verify wrangler.toml is valid
+        working-directory: cf-worker
+        run: |
+          echo "=== wrangler.toml contents ==="
+          cat wrangler.toml
+          echo ""
+          echo "=== Verifying config (dry-run deploy) ==="
+          npx wrangler deploy --dry-run --outdir /tmp/wrangler-out || exit 1
+          echo "✅ wrangler.toml is valid"
+
       - name: Deploy with wrangler
         uses: cloudflare/wrangler-action@v3
         with:
@@ -62,6 +72,8 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cf-worker
           command: deploy
+          # Use the wrangler version from package.json (v3 from @cloudflare/puppeteer deps)
+          # The pre-installed wrangler 3.x works fine with [browser] syntax
 
       - name: Verify deployment
         run: |
