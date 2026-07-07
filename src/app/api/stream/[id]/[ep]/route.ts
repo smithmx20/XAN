@@ -333,19 +333,26 @@ async function fetchIsekai2ndSourcesServerSide(
       // Only process absolute URLs
       if (!decodedUrl.startsWith("http")) continue;
 
-      // ✅ Mp4 (mp4upload) → scrape embed page for DIRECT .mp4 URL
-      // The embed page contains: src: "https://a4.mp4upload.com:183/d/.../video.mp4"
-      // This direct URL supports seeking (206 Partial Content) and plays in
-      // XAN's custom video player. Needs Referer header (player uses cf-proxy tier).
+      // ✅ Mp4 (mp4upload) → scrape embed page for DIRECT .mp4 URL, then
+      // pre-wrap with CF Worker proxy URL so the player loads it on the first
+      // try (no failed "direct" attempt → no fallback delay).
+      // The Worker adds the Referer header that mp4upload requires.
       if (s.sourceName === "Mp4" || decodedUrl.includes("mp4upload.com")) {
         const directMp4 = await scrapeMp4UploadDirectUrl(decodedUrl);
         if (directMp4) {
+          // Pre-wrap with CF Worker proxy — player loads this URL directly,
+          // no tier cascade needed. Worker streams the video with Referer.
+          const workerUrl = process.env.NEXT_PUBLIC_CF_WORKER_URL?.replace(/\/+$/, "");
+          const finalUrl = workerUrl
+            ? `${workerUrl}/?url=${encodeURIComponent(directMp4)}&h_Referer=${encodeURIComponent("https://www.mp4upload.com/")}`
+            : directMp4; // fallback: raw URL (player will try cf-proxy tier)
+
           sources.push({
-            url: directMp4,
+            url: finalUrl,
             type: "mp4",
             quality: null,
             sourceName: s.sourceName,
-            headers: { Referer: "https://www.mp4upload.com/" },
+            // No headers needed — CF Worker adds Referer automatically
             provider: "allanime",
           });
           continue; // skip the iframe fallback below
