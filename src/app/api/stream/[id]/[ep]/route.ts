@@ -340,14 +340,14 @@ async function fetchIsekai2ndSourcesServerSide(
           return { sources: [], fellBackToSub: false };
         }
         // Process the sub sources
-        const processed = processAllAnimeSources(subSources);
+        const processed = await processAllAnimeSources(subSources);
         return { sources: processed, fellBackToSub: true };
       }
       return { sources: [], fellBackToSub: false };
     }
 
     // Step 3: Process sources
-    const sources = processAllAnimeSources(rawSources);
+    const sources = await processAllAnimeSources(rawSources);
     const fellBackToSub = mode === "dub" && effectiveMode === "sub";
     return { sources, fellBackToSub };
   } catch (err) {
