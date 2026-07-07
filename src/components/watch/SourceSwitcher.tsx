@@ -201,7 +201,6 @@ export function SourceSwitcher({
   const providerGroups = providerOrder.map((providerId) => ({
     providerId,
     label: providerId === "allanime" ? "AllAnime"
-      : providerId === "isekai2nd" ? "Isekai2nd"
       : providerId === "zen" ? "Zen"
       : providerId === "koto" ? "Koto"
       : providerId === "pahe" ? "AnimePahe"

@@ -137,11 +137,9 @@ export const DEFAULT_SETTINGS: Settings = {
   showSourceSwitcher: true,
   disabledSources: [],
   pinnedSource: null,
-  providerPriority: ["isekai2nd", "allanime", "zen", "koto", "pahe", "gogoanime"],
-  // NOTE: isekai2nd/allanime are kept first because the CF Worker (v4) now
-  // navigates to mkissa.to (no Cloudflare challenge) instead of allmanga.to.
-  // If the Worker is deployed, AllAnime sources should work again.
-  // Other providers (zen, koto, pahe, gogoanime) are fallbacks.
+  providerPriority: ["allanime", "zen", "koto", "pahe", "gogoanime"],
+  // NOTE: "isekai2nd" was removed — all AllAnime sources (via CF Worker)
+  // are now tagged as provider: "allanime" so they show under one label.
   hideAdult: true,
   hideSpoilers: false,
   defaultSort: "trending",
@@ -153,7 +151,7 @@ export const DEFAULT_SETTINGS: Settings = {
 const STORAGE_KEY = "xan-settings";
 // ✅ Bump whenever a setting default changes in a way that should overwrite
 // the user's previously-stored value. The migration runs once per bump.
-const SETTINGS_VERSION = 4;
+const SETTINGS_VERSION = 5;
 const SETTINGS_VERSION_KEY = "xan-settings-version";
 
 function readSettings(): Settings {
@@ -201,6 +199,18 @@ function readSettings(): Settings {
       // priority but should still get the new provider).
       if (Array.isArray(merged.providerPriority) && !merged.providerPriority.includes("isekai2nd")) {
         merged.providerPriority = ["isekai2nd", ...merged.providerPriority];
+      }
+    }
+    if (storedVersion < 5) {
+      // v5: "isekai2nd" provider renamed to "allanime" — all AllAnime sources
+      // (via CF Worker) now show under the "AllAnime" label. Remove "isekai2nd"
+      // from the priority list so it doesn't show as a separate section.
+      if (Array.isArray(merged.providerPriority)) {
+        merged.providerPriority = merged.providerPriority.filter((p) => p !== "isekai2nd");
+        // Make sure "allanime" is in the list
+        if (!merged.providerPriority.includes("allanime")) {
+          merged.providerPriority = ["allanime", ...merged.providerPriority];
+        }
       }
     }
     return merged;

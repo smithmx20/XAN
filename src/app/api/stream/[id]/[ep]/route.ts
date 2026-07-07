@@ -16,6 +16,7 @@ import { NextResponse } from "next/server";
 import {
   findShowByAniListId,
   extractStreamUrl,
+  decodeUrl,
   type StreamResult,
 } from "@/lib/allanime";
 import { fetchConsumetStream, getConsumetConfig } from "@/lib/consumet";
@@ -324,28 +325,32 @@ async function fetchIsekai2ndSourcesServerSide(
     const sources = await fetchIsekai2ndSources(show._id, String(episode), mode);
     if (sources.length === 0) return [];
 
-    // Step 3: Map to unified format
-    // Note: the sourceUrl from AllAnime is RAW (possibly XOR/hex encoded).
-    // The client-side VideoPlayer / SourceSwitcher will call extractSource()
-    // to decode and dispatch to the right extractor (Yt-mp4, S-mp4, etc.).
-    // But since extractSource is a server-side function in src/lib/allanime.ts,
-    // and we're already server-side here, we should decode now.
+    // Step 3: Map to unified format — decode XOR-encoded URLs and tag as "allanime"
+    // The Worker returns sourceUrls that may be:
+    //   - Direct URLs (https://bysekoze.com/e/...) → use as-is
+    //   - XOR-encoded ("--175948514e4c...") → decode with decodeUrl() (XOR each byte with 56)
+    //   - Hex-encoded ("ap/...") → decode with decodeUrl() (hex decode)
     //
-    // However, decodeUrl + extractSource require importing from allanime.ts.
-    // To keep this file simple, we return the raw URLs and tag them with
-    // sourceName "Isekai2nd-<originalName>" so the client can distinguish them.
-    // The client's YouTubeStylePlayer will try direct fetch first, then fall
-    // back to manifest-proxy / cf-proxy / full-proxy — which is correct.
-    return sources.map((s) => ({
-      url: s.url, // raw URL — extractor pipeline will decode if needed
-      type: s.type,
-      quality: s.quality,
-      sourceName: s.sourceName,
-      headers: s.headers,
-      provider: "isekai2nd",
-    }));
+    // All sources are tagged provider: "allanime" so they show under the
+    // "AllAnime" section in the SourceSwitcher (not "Isekai2nd").
+    return sources.map((s) => {
+      const decodedUrl = decodeUrl(s.url);
+      // Determine the correct type for the player
+      // Worker returns "iframe" for embed pages — player loads these in an iframe
+      // Some sources (Fm-Hls, Vn-Hls) are HLS streams behind an embed, but
+      // the player handles them as iframe since that's how AllAnime serves them
+      const sourceType = s.type === "hls" ? "hls" : s.type === "mp4" ? "mp4" : "iframe";
+      return {
+        url: decodedUrl,
+        type: sourceType as "hls" | "mp4" | "iframe",
+        quality: s.quality,
+        sourceName: s.sourceName,
+        headers: s.headers,
+        provider: "allanime",
+      };
+    });
   } catch (err) {
-    console.warn("[stream] Isekai2nd fetch failed:", err);
+    console.warn("[stream] AllAnime (via Worker) fetch failed:", err);
     return [];
   }
 }
