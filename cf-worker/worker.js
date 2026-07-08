@@ -26,7 +26,13 @@
 // on the free tier with no browser CPU limits.
 
 // ─── Constants (from mkissa.to's bundle) ──────────────────────────────────
-const MASK_HEX = "b1a9a4d051988f1b1b12dbb747439d9bd64b09ea17835600a7eaa4de87c1ad87";
+// ⚠️ The MASK changes when mkissa.to deploys a new build. If AA_CRYPTO_STALE
+// persists even after refreshing __aaCrypto, check if the MASK has changed:
+//   1. Fetch https://mkissa.to/ and find the main JS chunk URL
+//   2. Search the chunk for: On="..." (64-char hex string)
+//   3. Update MASK_HEX below and redeploy
+// Last verified: 2026-07-08
+const MASK_HEX = "5ddc3a1ac04f5b0ae3f33bce61f78e4c209bb2a850d9c5d7dad9c2706d99a34d";
 const BUILD_ID = "9";
 const OLD_KEY_STR = "Xot36i3lK3:v1"; // for decrypting tobeparsed (unchanged)
 const ALLANIME_API = "https://api.allanime.day/api";
