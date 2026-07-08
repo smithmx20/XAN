@@ -100,12 +100,12 @@ export function EpisodePanel({
       </div>
       {/* ✅ Bug fix: use plain overflow-y-auto div instead of Radix ScrollArea.
           ScrollArea's Viewport was intercepting click events on Link components. */}
-      <div className="overflow-y-auto xan-scroll p-3" style={{ maxHeight: `${Math.min(total, 20) * 48 + 24}px` }}>
-        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+      <div className="max-h-64 overflow-y-auto xan-scroll p-2">
+        <div className="grid grid-cols-5 gap-1.5">
           {showCurrentEpisodeHint && (
             <Link
               href={`/watch/${animeId}?ep=${currentEpisode}${typeParam}`}
-              className="relative flex items-center justify-center aspect-square rounded-lg bg-xan-crimson border border-xan-crimson text-white text-sm font-mono font-semibold transition-all"
+              className="relative flex items-center justify-center aspect-square rounded-lg bg-xan-crimson border border-xan-crimson text-white text-xs font-medium transition-all"
             >
               {currentEpisode}
               <CheckCircle2 className="absolute -top-1 -right-1 h-3.5 w-3.5 text-xan-crimson bg-xan-dark rounded-full" />
@@ -127,7 +127,7 @@ export function EpisodePanel({
                 <div
                   key={n}
                   title={airingHint}
-                  className="relative flex items-center justify-center aspect-square rounded-lg bg-xan-card/30 border border-xan-border/50 opacity-40 grayscale cursor-not-allowed select-none text-sm font-mono text-muted-foreground"
+                  className="relative flex items-center justify-center aspect-square rounded-lg bg-xan-card/30 border border-xan-border/50 opacity-40 grayscale cursor-not-allowed select-none text-xs font-medium text-muted-foreground"
                 >
                   {n}
                   {isNext && (
@@ -145,7 +145,7 @@ export function EpisodePanel({
                 href={`/watch/${animeId}?ep=${n}${typeParam}`}
                 title={`Episode ${n}`}
                 className={cn(
-                  "relative flex items-center justify-center aspect-square rounded-lg border transition-all text-sm font-mono font-semibold",
+                  "relative flex items-center justify-center aspect-square rounded-lg border transition-all text-xs font-medium",
                   isActive
                     ? "bg-xan-crimson border-xan-crimson text-white"
                     : "bg-xan-card border-xan-border text-foreground hover:bg-xan-crimson/15 hover:border-xan-crimson/50 hover:text-xan-crimson",
