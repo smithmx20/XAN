@@ -877,7 +877,7 @@ export function YouTubeStylePlayer({
         setCursorVisible(false);
       }
     }, 3000);
-  }, []);
+  }, [streamType]);
 
   const onContainerMouseMove = useCallback(() => {
     // ✅ Mouse movement always reveals controls + cursor, then schedules hide.
