@@ -60,6 +60,8 @@ import {
   X,
   Eye,
   EyeOff,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
 import { VideoEnhancerFilters } from "./VideoEnhancerFilters";
@@ -1297,6 +1299,14 @@ export function YouTubeStylePlayer({
   // is safe because we only embed known provider URLs (Ok.ru, Uni) via the
   // host allowlist in the stream API.
   if (streamType === "iframe") {
+    const toggleIframeFullscreen = () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        containerRef.current?.requestFullscreen?.();
+      }
+    };
+
     return (
       <div
         ref={containerRef}
@@ -1325,7 +1335,7 @@ export function YouTubeStylePlayer({
             <div className="w-12 h-12 rounded-full border-4 border-white/20 border-t-xan-crimson animate-xan-spinner" />
           </div>
         )}
-        {/* Top gradient with title + source badge — minimal UI for iframe mode */}
+        {/* Top gradient with title + source badge + fullscreen button */}
         <div className="absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 pt-3 pb-8 pointer-events-none">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -1377,6 +1387,22 @@ export function YouTubeStylePlayer({
                     }`}
                   />
                 </div>
+              </button>
+              {/* ✅ Fullscreen button — requests fullscreen on the container div.
+                  The iframe has allowFullScreen so the embed's own player can
+                  also go fullscreen, but this button lets the USER control it
+                  from XAN's UI (some embeds hide their own fullscreen button). */}
+              <button
+                onClick={toggleIframeFullscreen}
+                className="p-1.5 rounded-md hover:bg-white/15 active:bg-white/25 transition-colors pointer-events-auto flex items-center justify-center"
+                aria-label="Toggle fullscreen"
+                title="Fullscreen"
+              >
+                {isFullscreen ? (
+                  <Minimize2 className="h-4 w-4 text-white" />
+                ) : (
+                  <Maximize2 className="h-4 w-4 text-white" />
+                )}
               </button>
             </div>
           </div>
