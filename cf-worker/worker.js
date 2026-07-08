@@ -229,7 +229,10 @@ function setCached(key, sources) {
   }
 }
 
-// Cache for __aaCrypto + derived AES key (valid for the epoch duration)
+// Cache for __aaCrypto + derived AES key.
+// The partB key rotates periodically (AA_CRYPTO_STALE when it expires).
+// Cache for 1 hour — if stale, the retry logic will refresh it automatically.
+const AA_CRYPTO_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 let aaCryptoCache = null; // { aaCrypto, aesKey, expiresAt }
 
 async function getAaCryptoAndKey(showId, episodeString, translationType) {
@@ -241,7 +244,7 @@ async function getAaCryptoAndKey(showId, episodeString, translationType) {
   aaCryptoCache = {
     aaCrypto,
     aesKey,
-    expiresAt: Date.now() + (aaCrypto.epochMs || 432000000), // 5 days default
+    expiresAt: Date.now() + AA_CRYPTO_CACHE_TTL_MS,
   };
   return aaCryptoCache;
 }
@@ -378,11 +381,69 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
 
     if (json.errors && json.errors[0]) {
       const err = json.errors[0];
-      // If crypto is rejected, clear the cache so next call re-fetches __aaCrypto
-      if (err.extensions?.code?.startsWith("AA_CRYPTO")) {
+      const errCode = err.extensions?.code ?? "";
+
+      // If crypto is rejected (STALE, BUILD_MISMATCH, etc.), clear cache and RETRY
+      // with fresh __aaCrypto. This handles key rotation without failing.
+      if (errCode.startsWith("AA_CRYPTO")) {
+        console.warn(`[worker] ${errCode} — refreshing __aaCrypto and retrying...`);
         aaCryptoCache = null;
+
+        // Re-fetch fresh __aaCrypto + re-derive key + re-sign + retry the API call
+        const freshCrypto = await getAaCryptoAndKey(showId, episodeString, translationType);
+        const freshAaReq = await buildAaReq(queryHash, freshCrypto.aaCrypto.epoch, freshCrypto.aesKey);
+
+        const retryRes = await fetch(ALLANIME_API, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            Referer: "https://mkissa.to/",
+            Origin: "https://mkissa.to",
+            "x-build-id": BUILD_ID,
+          },
+          body: JSON.stringify({
+            query: EPISODE_QUERY,
+            variables: { showId, episodeString, translationType },
+            extensions: {
+              persistedQuery: { version: 1, sha256Hash: queryHash },
+              aaReq: freshAaReq,
+            },
+          }),
+        });
+
+        if (retryRes.ok) {
+          const retryJson = await retryRes.json();
+          if (!retryJson.errors) {
+            // Success on retry!
+            if (retryJson.data?.tobeparsed) {
+              const decrypted = await decryptTobeparsed(retryJson.data.tobeparsed, freshCrypto.aesKey);
+              const sources = decrypted?.episode?.sourceUrls ?? [];
+              if (sources.length > 0) {
+                console.log(`[worker] retry success — ${sources.length} sources`);
+                setCached(cacheKey, sources);
+                return { sources, cached: false, error: null };
+              }
+            }
+            if (retryJson.data?.episode?.sourceUrls) {
+              const sources = retryJson.data.episode.sourceUrls;
+              console.log(`[worker] retry success (cleartext) — ${sources.length} sources`);
+              setCached(cacheKey, sources);
+              return { sources, cached: false, error: null };
+            }
+          }
+          // Retry also failed — return the original error
+          const retryErr = retryJson.errors?.[0];
+          if (retryErr) {
+            return { sources: null, error: `AllAnime GraphQL (retry): ${retryErr.message} (${retryErr.extensions?.code})` };
+          }
+        }
+
+        return { sources: null, error: `AllAnime GraphQL: ${err.message} (${errCode}) — retry also failed` };
       }
-      return { sources: null, error: `AllAnime GraphQL: ${err.message} (${err.extensions?.code})` };
+
+      return { sources: null, error: `AllAnime GraphQL: ${err.message} (${errCode})` };
     }
 
     // Step 5: Decrypt tobeparsed (try new key first, old key as fallback)
