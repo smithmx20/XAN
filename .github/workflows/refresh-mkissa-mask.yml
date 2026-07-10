@@ -1,0 +1,268 @@
+# .github/workflows/refresh-mkissa-mask.yml
+#
+# Daily cron that checks if mkissa.to has rotated the AllAnime MASK/BUILD_ID.
+# If the values changed, this workflow:
+#   1. Updates FALLBACK_MASK_HEX and FALLBACK_BUILD_ID in cf-worker/worker.js
+#   2. Commits the change to main
+#   3. The existing deploy-cf-worker.yml workflow then auto-deploys the Worker
+#
+# This is the SECOND layer of defense. The FIRST layer is the Worker's built-in
+# runtime self-healing: when AllAnime returns AA_CRYPTO_STALE, the Worker crawls
+# mkissa.to at runtime and discovers the new MASK/BUILD_ID automatically.
+# This cron keeps the hardcoded FALLBACK values fresh so the Worker usually
+# doesn't need to self-heal (faster first request after rotation).
+#
+# Schedule: every 6 hours. The MASK only changes every few days/weeks, so this
+# is more than frequent enough to catch a rotation within ~6h.
+# Manual trigger: Actions tab → "Refresh mkissa.to MASK" → "Run workflow".
+
+name: Refresh mkissa.to MASK
+
+on:
+  schedule:
+    # Every 6 hours at minute 15 (offset to avoid GitHub's cron rush at :00)
+    - cron: "15 */6 * * *"
+  workflow_dispatch: # Allow manual trigger from Actions tab
+
+permissions:
+  contents: write # Required for committing the updated fallback values
+
+jobs:
+  refresh:
+    name: Check & refresh MASK/BUILD_ID
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Use a deploy key or the default GITHUB_TOKEN — both work for pushing
+          # back to the same repo. We use the default token with `permissions:
+          # contents: write` above.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Fetch mkissa.to and discover MASK/BUILD_ID
+        id: discover
+        working-directory: cf-worker
+        run: |
+          set -euo pipefail
+          node <<'DISCOVERY_SCRIPT' > /tmp/discovery-result.json
+          // Crawl mkissa.to's SvelteKit bundle to find the current MASK and BUILD_ID.
+          // Mirrors the Worker's discoverMaskFromMkissa() function.
+          const MKISSA_ORIGIN = "https://mkissa.to/";
+          const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+          const MASK_PATTERN = /const\s+[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*\s*\(\s*\d+\s*\)\s*!==\s*"string"\s*\?\s*"([0-9a-fA-F]{64})"\s*:\s*""/;
+          const BUILD_ID_NEAR_MASK_PATTERN = /,([A-Za-z_$][\w$]*)\s*=\s*"(\d{1,3})"/;
+
+          function resolveChunkUrl(rel, baseUrl) {
+            if (rel.startsWith("http://") || rel.startsWith("https://")) return rel;
+            const clean = rel.split("?")[0].split("#")[0];
+            let baseDir = baseUrl.slice(0, baseUrl.lastIndexOf("/"));
+            let r = clean;
+            while (r.startsWith("../")) {
+              baseDir = baseDir.slice(0, baseDir.lastIndexOf("/"));
+              r = r.slice(3);
+            }
+            if (r.startsWith("./")) r = r.slice(2);
+            return `${baseDir}/${r}`;
+          }
+
+          async function main() {
+            // 1. Fetch landing page
+            const htmlRes = await fetch(MKISSA_ORIGIN, {
+              headers: { "User-Agent": UA, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+            });
+            if (!htmlRes.ok) throw new Error(`mkissa.to HTTP ${htmlRes.status}`);
+            const html = await htmlRes.text();
+
+            // 2. Extract entry chunk URLs
+            const entryUrls = [...html.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)]
+              .map(m => m[1])
+              .filter(u => u.includes("/_app/immutable/entry/"));
+            if (entryUrls.length === 0) throw new Error("no entry chunk URLs in mkissa.to HTML");
+
+            // 3. Fetch entry chunks, collect /chunks/ URLs
+            const chunkUrls = new Set();
+            await Promise.all(entryUrls.map(async (url) => {
+              try {
+                const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "*/*" } });
+                if (!res.ok) return;
+                const src = await res.text();
+                for (const m of src.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)) {
+                  const abs = resolveChunkUrl(m[1], url);
+                  if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
+                }
+                for (const m of src.matchAll(/from\s*"([^"]+\.js)"/g)) {
+                  const abs = resolveChunkUrl(m[1], url);
+                  if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
+                }
+              } catch (e) { console.error(`entry fetch failed ${url}: ${e.message}`); }
+            }));
+
+            // 4. Fetch chunks in parallel, search for MASK
+            const candidates = [...chunkUrls];
+            console.log(`Found ${candidates.length} chunk URLs to search`);
+            const results = await Promise.all(candidates.map(async (url) => {
+              try {
+                const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "*/*" } });
+                if (!res.ok) return null;
+                const src = await res.text();
+                const maskMatch = src.match(MASK_PATTERN);
+                if (!maskMatch) return null;
+                const afterMask = src.slice(maskMatch.index, maskMatch.index + 300);
+                const buildIdMatch = afterMask.match(BUILD_ID_NEAR_MASK_PATTERN);
+                return {
+                  mask: maskMatch[1],
+                  buildId: buildIdMatch ? buildIdMatch[2] : null,
+                  chunk: url.split("/").pop(),
+                };
+              } catch { return null; }
+            }));
+
+            const found = results.find(r => r !== null);
+            if (!found) throw new Error("MASK not found in any chunk — pattern shape may have changed");
+            if (!found.buildId) throw new Error(`MASK found in ${found.chunk} but BUILD_ID missing`);
+
+            console.log(`✓ MASK=${found.mask.slice(0,16)}... BUILD_ID=${found.buildId} (from ${found.chunk})`);
+            // Output as JSON for the next step to consume
+            console.log(JSON.stringify({ mask: found.mask, buildId: found.buildId, chunk: found.chunk }));
+          }
+
+          main().then(result => {
+            // main() logs the JSON via console.log — capture from /tmp/discovery-result.json
+          }).catch(e => {
+            console.error("FATAL:", e.message);
+            process.exit(1);
+          });
+          DISCOVERY_SCRIPT
+
+          # The node script logs JSON to stdout — extract the last JSON line
+          RESULT=$(grep -E '^\{' /tmp/discovery-result.json | tail -1)
+          if [ -z "$RESULT" ]; then
+            echo "❌ Discovery failed — no JSON output"
+            cat /tmp/discovery-result.json
+            exit 1
+          fi
+          echo "$RESULT" > /tmp/discovery-final.json
+          echo "Discovery result:"
+          cat /tmp/discovery-final.json
+          echo ""
+
+          # Export as step outputs
+          MASK=$(jq -r '.mask' /tmp/discovery-final.json)
+          BUILD_ID=$(jq -r '.buildId' /tmp/discovery-final.json)
+          echo "mask=$MASK" >> "$GITHUB_OUTPUT"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Read current fallback values from worker.js
+        id: current
+        working-directory: cf-worker
+        run: |
+          set -euo pipefail
+          # Extract current FALLBACK_MASK_HEX and FALLBACK_BUILD_ID from worker.js
+          CURRENT_MASK=$(grep -oE 'FALLBACK_MASK_HEX = "[0-9a-fA-F]{64}"' worker.js | grep -oE '[0-9a-fA-F]{64}')
+          CURRENT_BUILD_ID=$(grep -oE 'FALLBACK_BUILD_ID = "[0-9]+"' worker.js | grep -oE '"[0-9]+"' | tr -d '"')
+          if [ -z "$CURRENT_MASK" ] || [ -z "$CURRENT_BUILD_ID" ]; then
+            echo "❌ Could not extract current fallback values from worker.js"
+            echo "   MASK: '$CURRENT_MASK'"
+            echo "   BUILD_ID: '$CURRENT_BUILD_ID'"
+            exit 1
+          fi
+          echo "Current fallback: MASK=$CURRENT_MASK BUILD_ID=$CURRENT_BUILD_ID"
+          echo "current_mask=$CURRENT_MASK" >> "$GITHUB_OUTPUT"
+          echo "current_build_id=$CURRENT_BUILD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Compare and decide
+        id: compare
+        run: |
+          set -euo pipefail
+          NEW_MASK="${{ steps.discover.outputs.mask }}"
+          NEW_BUILD_ID="${{ steps.discover.outputs.build_id }}"
+          CUR_MASK="${{ steps.current.outputs.current_mask }}"
+          CUR_BUILD_ID="${{ steps.current.outputs.current_build_id }}"
+
+          echo "New:  MASK=$NEW_MASK BUILD_ID=$NEW_BUILD_ID"
+          echo "Curr: MASK=$CUR_MASK BUILD_ID=$CUR_BUILD_ID"
+
+          if [ "$NEW_MASK" = "$CUR_MASK" ] && [ "$NEW_BUILD_ID" = "$CUR_BUILD_ID" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "✅ No change — fallback values are already current"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "🔄 MASK and/or BUILD_ID changed — will update worker.js"
+            if [ "$NEW_MASK" != "$CUR_MASK" ]; then
+              echo "   MASK:     $CUR_MASK → $NEW_MASK"
+            fi
+            if [ "$NEW_BUILD_ID" != "$CUR_BUILD_ID" ]; then
+              echo "   BUILD_ID: $CUR_BUILD_ID → $NEW_BUILD_ID"
+            fi
+          fi
+
+      - name: Update worker.js with new fallback values
+        if: steps.compare.outputs.changed == 'true'
+        working-directory: cf-worker
+        run: |
+          set -euo pipefail
+          NEW_MASK="${{ steps.discover.outputs.mask }}"
+          NEW_BUILD_ID="${{ steps.discover.outputs.build_id }}"
+          # Replace the FALLBACK_MASK_HEX value (64 hex chars between quotes)
+          sed -i -E "s|FALLBACK_MASK_HEX = \"[0-9a-fA-F]{64}\"|FALLBACK_MASK_HEX = \"$NEW_MASK\"|" worker.js
+          # Replace the FALLBACK_BUILD_ID value (digits between quotes)
+          sed -i -E "s|FALLBACK_BUILD_ID = \"[0-9]+\"|FALLBACK_BUILD_ID = \"$NEW_BUILD_ID\"|" worker.js
+          # Update the "Last manual verification" date
+          TODAY=$(date -u +%Y-%m-%d)
+          sed -i -E "s|// Last manual verification: [0-9-]+|// Last manual verification: $TODAY|" worker.js
+          echo "✅ Updated worker.js:"
+          grep -E '^const FALLBACK_' worker.js
+
+      - name: Verify worker.js still parses
+        if: steps.compare.outputs.changed == 'true'
+        working-directory: cf-worker
+        run: |
+          node --check worker.js && echo "✅ worker.js parses cleanly"
+
+      - name: Commit and push
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cf-worker/worker.js
+          git commit -m "chore(worker): auto-refresh mkissa.to MASK/BUILD_ID [$TODAY]
+
+          Detected by GitHub Actions cron (refresh-mkissa-mask.yml):
+            MASK_HEX  →  ${{ steps.discover.outputs.mask }}
+            BUILD_ID  →  ${{ steps.discover.outputs.build_id }}
+
+          The Worker's runtime self-healing would have handled this automatically,
+          but this commit keeps the hardcoded FALLBACK values fresh so the first
+          request after a rotation doesn't need to self-heal."
+          git push
+          echo "✅ Committed and pushed"
+
+      - name: Summary
+        run: |
+          echo "## Refresh summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.compare.outputs.changed }}" = "true" ]; then
+            echo "✅ **Values changed** — committed update to cf-worker/worker.js" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Field | Old | New |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| MASK | \`${{ steps.current.outputs.current_mask }}\` | \`${{ steps.discover.outputs.mask }}\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| BUILD_ID | \`${{ steps.current.outputs.current_build_id }}\` | \`${{ steps.discover.outputs.build_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "The deploy-cf-worker.yml workflow will auto-deploy the Worker shortly." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "✅ **No change** — fallback values are already current." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Current: MASK=\`${{ steps.current.outputs.current_mask }}\` BUILD_ID=\`${{ steps.current.outputs.current_build_id }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi

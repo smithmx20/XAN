@@ -25,19 +25,36 @@
 // This is 10x faster than Browser Rendering (no Chrome launch) and works
 // on the free tier with no browser CPU limits.
 
-// ─── Constants (from mkissa.to's bundle) ──────────────────────────────────
-// ⚠️ The MASK changes when mkissa.to deploys a new build. If AA_CRYPTO_STALE
-// persists even after refreshing __aaCrypto, check if the MASK has changed:
-//   1. Fetch https://mkissa.to/ and find the main JS chunk URL
-//   2. Download all chunks, search for: const $n=_t(460)!=="string"?"<MASK>":""
-//   3. Look for the matching BUILD_ID: zr="<N>"
-//   4. Update MASK_HEX + BUILD_ID below and redeploy
-// Last verified: 2026-07-11
-const MASK_HEX = "f5dc46e6f42968c5ed0eab602d6ae8f2107991006f02876947e64fcb75d53da6";
-const BUILD_ID = "13";
+// ─── MASK / BUILD_ID — self-healing with hardcoded fallback ───────────────
+// mkissa.to rotates the AES-key MASK and bumps BUILD_ID every time they deploy
+// a new build (every few days/weeks). When that happens, AllAnime's API rejects
+// every signed request with AA_CRYPTO_STALE.
+//
+// This Worker self-heals: when AA_CRYPTO_STALE is returned, it crawls mkissa.to's
+// SvelteKit bundle at runtime, finds the new MASK and BUILD_ID by regex, caches
+// them in memory, and retries the request — all without a code update.
+//
+// The FALLBACK values below are used:
+//   - on the very first request after a cold start (before discovery has run)
+//   - if runtime discovery fails (e.g. mkissa.to is down, or the pattern shape
+//     changed and the regexes below no longer match — in which case update the
+//     regexes in discoverMaskFromMkissa() and the fallback values here, then
+//     redeploy)
+// Last manual verification: 2026-07-11
+const FALLBACK_MASK_HEX = "f5dc46e6f42968c5ed0eab602d6ae8f2107991006f02876947e64fcb75d53da6";
+const FALLBACK_BUILD_ID = "13";
+
+// Runtime cache for discovered MASK/BUILD_ID. Lives for the lifetime of the
+// Worker isolate (cross-request within the same isolate). TTL is long because
+// the MASK only changes every few days/weeks — STALE will trigger a refresh.
+let discoveredCrypto = null; // { mask, buildId, expiresAt }
+const DISCOVERED_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
 const OLD_KEY_STR = "Xot36i3lK3:v1"; // for decrypting tobeparsed (unchanged)
 const ALLANIME_API = "https://api.allanime.day/api";
 const MKISSA_EPISODE_URL = (showId, ep, mode) => `https://mkissa.to/watch/${showId}/p-${ep}-${mode}`;
+const MKISSA_ORIGIN = "https://mkissa.to/";
+const MKISSA_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 // ─── Stream proxy allowlist (unchanged) ───────────────────────────────────
 const ALLOWED_HOSTS = [
@@ -137,8 +154,8 @@ function hexToBytes(hex) {
 // Derive the AES key from partB and the mask
 // key = XOR(atob(partB), maskBytes)  — both are 32 bytes
 // This key is used for BOTH signing requests AND decrypting tobeparsed
-async function deriveAesKey(partB) {
-  const maskBytes = hexToBytes(MASK_HEX);
+async function deriveAesKey(partB, maskHex) {
+  const maskBytes = hexToBytes(maskHex);
   const partBBytes = Uint8Array.from(atob(partB), (c) => c.charCodeAt(0));
   if (partBBytes.length < 32) throw new Error("partB too short");
   const keyBytes = new Uint8Array(32);
@@ -157,11 +174,11 @@ async function sha256(str) {
 
 // Build the aaReq extension (the signed request proof)
 // Mirrors mkissa.to's a0() function
-async function buildAaReq(queryHash, epoch, aesKey) {
+async function buildAaReq(queryHash, epoch, aesKey, buildId) {
   const ts = Math.floor(Date.now() / 300000) * 300000; // 5-min bucket
-  const payload = JSON.stringify({ v: 1, ts, epoch, buildId: BUILD_ID, qh: queryHash });
+  const payload = JSON.stringify({ v: 1, ts, epoch, buildId, qh: queryHash });
   // iv = SHA-256(epoch + ":" + buildId + ":" + queryHash + ":" + ts).slice(0, 12)
-  const ivSource = `${epoch}:${BUILD_ID}:${queryHash}:${ts}`;
+  const ivSource = `${epoch}:${buildId}:${queryHash}:${ts}`;
   const ivHash = await sha256(ivSource);
   const iv = ivHash.slice(0, 12);
   // Encrypt payload
@@ -217,6 +234,175 @@ async function computeQueryHash(queryStr) {
   return Array.from(hash).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+// ─── Runtime MASK/BUILD_ID discovery (self-healing) ───────────────────────
+// Crawls mkissa.to's SvelteKit bundle at runtime to find the current MASK and
+// BUILD_ID. Called automatically when AllAnime returns AA_CRYPTO_STALE, so the
+// Worker self-heals without needing a code update on every mkissa.to deploy.
+//
+// Strategy (optimized for Cloudflare Workers' 50-subrequest free-tier limit):
+//   1. Fetch https://mkissa.to/ (1 subrequest) — extract entry chunk URLs
+//   2. Fetch entry chunks (1–2 subrequests) — extract /chunks/ URLs
+//   3. Fetch each chunk in parallel (Promise.all, ~10 subrequests) — search
+//      each for the MASK pattern, short-circuit on first hit
+// Total: ~13 subrequests, well under the 50-subrequest free-tier limit.
+
+// Pattern: const $n=_t(460)!=="string"?"<64-hex>":""
+// Variable names are minified, so we match the SHAPE not the names.
+const MASK_PATTERN = /const\s+[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*\s*\(\s*\d+\s*\)\s*!==\s*"string"\s*\?\s*"([0-9a-fA-F]{64})"\s*:\s*""/;
+// Pattern (right after the MASK): ,zr="13"  — BUILD_ID is the next assignment
+const BUILD_ID_NEAR_MASK_PATTERN = /,([A-Za-z_$][\w$]*)\s*=\s*"(\d{1,3})"/;
+
+function resolveChunkUrl(rel, baseUrl) {
+  if (rel.startsWith("http://") || rel.startsWith("https://")) return rel;
+  const clean = rel.split("?")[0].split("#")[0];
+  // Strip the filename from baseUrl to get the directory
+  let baseDir = baseUrl.slice(0, baseUrl.lastIndexOf("/"));
+  let r = clean;
+  while (r.startsWith("../")) {
+    baseDir = baseDir.slice(0, baseDir.lastIndexOf("/"));
+    r = r.slice(3);
+  }
+  if (r.startsWith("./")) r = r.slice(2);
+  return `${baseDir}/${r}`;
+}
+
+async function discoverMaskFromMkissa() {
+  console.log("[worker] discovering fresh MASK/BUILD_ID from mkissa.to bundle");
+
+  // Step 1: Fetch landing page
+  const htmlRes = await fetch(MKISSA_ORIGIN, {
+    headers: {
+      "User-Agent": MKISSA_UA,
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+  });
+  if (!htmlRes.ok) throw new Error(`mkissa.to returned HTTP ${htmlRes.status}`);
+  const html = await htmlRes.text();
+
+  // Step 2: Extract entry chunk URLs from `import("...")` calls
+  const entryUrlMatches = [...html.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)];
+  const entryUrls = entryUrlMatches
+    .map((m) => m[1])
+    .filter((u) => u.includes("/_app/immutable/entry/"));
+  if (entryUrls.length === 0) {
+    throw new Error("no entry chunk URLs found in mkissa.to HTML");
+  }
+
+  // Step 3: Fetch entry chunks, collect all referenced /chunks/ URLs
+  // (We focus on /chunks/ because the MASK lives in a shared chunk, not a node.
+  //  The mask chunk CY39o1wT.js is directly imported by entry/app.<hash>.js.)
+  const chunkUrls = new Set();
+  await Promise.all(
+    entryUrls.map(async (url) => {
+      try {
+        const res = await fetch(url, {
+          headers: { "User-Agent": MKISSA_UA, "Accept": "*/*" },
+        });
+        if (!res.ok) return;
+        const src = await res.text();
+        // Dynamic imports: import("./chunks/foo.js") or import("../chunks/foo.js")
+        for (const m of src.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)) {
+          const abs = resolveChunkUrl(m[1], url);
+          if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
+        }
+        // Static imports: from "./chunks/foo.js"  (note: minified JS has NO space
+        // between `from` and the opening quote, so \s* not \s+)
+        for (const m of src.matchAll(/from\s*"([^"]+\.js)"/g)) {
+          const abs = resolveChunkUrl(m[1], url);
+          if (abs.includes("/_app/immutable/chunks/")) chunkUrls.add(abs);
+        }
+      } catch (e) {
+        console.warn(`[worker] failed to fetch entry chunk ${url}: ${e.message}`);
+      }
+    })
+  );
+
+  const candidateUrls = [...chunkUrls];
+  console.log(`[worker] found ${candidateUrls.length} chunk URLs to search for MASK`);
+  if (candidateUrls.length === 0) {
+    throw new Error("no /chunks/ URLs found in entry chunks");
+  }
+
+  // Step 4: Fetch all chunks in parallel, search each for the MASK pattern.
+  // Short-circuit on first hit (Promise.any + AbortController would be cleaner
+  // but Promise.all + find works fine for ~10 chunks).
+  const results = await Promise.all(
+    candidateUrls.map(async (url) => {
+      try {
+        const res = await fetch(url, {
+          headers: { "User-Agent": MKISSA_UA, "Accept": "*/*" },
+        });
+        if (!res.ok) return null;
+        const src = await res.text();
+        const maskMatch = src.match(MASK_PATTERN);
+        if (!maskMatch) return null;
+        // Found MASK! Now find BUILD_ID right after it.
+        // Pattern: const $n=_t(460)!=="string"?"<MASK>":"",zr="13"
+        const afterMask = src.slice(maskMatch.index, maskMatch.index + 300);
+        const buildIdMatch = afterMask.match(BUILD_ID_NEAR_MASK_PATTERN);
+        return {
+          mask: maskMatch[1],
+          buildId: buildIdMatch ? buildIdMatch[2] : null,
+          chunkUrl: url,
+        };
+      } catch (e) {
+        return null;
+      }
+    })
+  );
+
+  const found = results.find((r) => r !== null);
+  if (!found) {
+    throw new Error("MASK pattern not found in any crawled chunk — pattern shape may have changed");
+  }
+
+  if (!found.buildId) {
+    throw new Error(`MASK found in ${found.chunkUrl} but BUILD_ID not found nearby`);
+  }
+
+  console.log(
+    `[worker] ✓ discovered MASK=${found.mask.slice(0, 16)}... BUILD_ID=${found.buildId} from ${found.chunkUrl.split("/").pop()}`
+  );
+  return { mask: found.mask, buildId: found.buildId };
+}
+
+// Returns the current MASK/BUILD_ID, preferring cached discovered values,
+// falling back to hardcoded constants.
+async function getMaskAndBuildId() {
+  if (discoveredCrypto && discoveredCrypto.expiresAt > Date.now()) {
+    return {
+      mask: discoveredCrypto.mask,
+      buildId: discoveredCrypto.buildId,
+      source: "discovered",
+    };
+  }
+  return {
+    mask: FALLBACK_MASK_HEX,
+    buildId: FALLBACK_BUILD_ID,
+    source: "fallback",
+  };
+}
+
+// Force a fresh discovery. Called when AA_CRYPTO_STALE happens.
+// If discovery succeeds, caches the result for 24h. If it fails, logs a warning
+// and leaves the cache empty (caller will use fallback values).
+async function refreshMaskAndBuildId() {
+  discoveredCrypto = null;
+  try {
+    const discovered = await discoverMaskFromMkissa();
+    discoveredCrypto = {
+      mask: discovered.mask,
+      buildId: discovered.buildId,
+      expiresAt: Date.now() + DISCOVERED_CACHE_TTL_MS,
+    };
+    return discoveredCrypto;
+  } catch (e) {
+    console.warn(`[worker] mask discovery failed: ${e.message}`);
+    return null;
+  }
+}
+
 // ─── In-memory cache ─────────────────────────────────────────────────────
 const responseCache = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -247,7 +433,8 @@ async function getAaCryptoAndKey(showId, episodeString, translationType) {
     return aaCryptoCache;
   }
   const aaCrypto = await fetchAaCrypto(showId, episodeString, translationType);
-  const aesKey = await deriveAesKey(aaCrypto.partB);
+  const { mask } = await getMaskAndBuildId();
+  const aesKey = await deriveAesKey(aaCrypto.partB, mask);
   aaCryptoCache = {
     aaCrypto,
     aesKey,
@@ -353,8 +540,9 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
     console.log(`[worker] queryHash: ${queryHash.slice(0, 16)}...`);
 
     // Step 3: Build aaReq extension (the signed proof)
-    const aaReq = await buildAaReq(queryHash, aaCrypto.epoch, aesKey);
-    console.log(`[worker] aaReq built (length: ${aaReq.length})`);
+    const { buildId } = await getMaskAndBuildId();
+    const aaReq = await buildAaReq(queryHash, aaCrypto.epoch, aesKey, buildId);
+    console.log(`[worker] aaReq built (length: ${aaReq.length}) using BUILD_ID=${buildId}`);
 
     // Step 4: POST to api.allanime.day/api with the signed request
     const body = {
@@ -374,7 +562,7 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Referer": "https://mkissa.to/",
         "Origin": "https://mkissa.to",
-        "x-build-id": BUILD_ID,
+        "x-build-id": buildId,
       },
       body: JSON.stringify(body),
     });
@@ -391,14 +579,22 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
       const errCode = err.extensions?.code ?? "";
 
       // If crypto is rejected (STALE, BUILD_MISMATCH, etc.), clear cache and RETRY
-      // with fresh __aaCrypto. This handles key rotation without failing.
+      // with fresh __aaCrypto AND freshly-discovered MASK/BUILD_ID.
+      // This handles key rotation without failing — the Worker self-heals.
       if (errCode.startsWith("AA_CRYPTO")) {
-        console.warn(`[worker] ${errCode} — refreshing __aaCrypto and retrying...`);
+        console.warn(`[worker] ${errCode} — refreshing __aaCrypto AND MASK/BUILD_ID, then retrying...`);
         aaCryptoCache = null;
+        discoveredCrypto = null;
+
+        // Self-heal: discover fresh MASK/BUILD_ID from mkissa.to's bundle.
+        // If discovery fails, getMaskAndBuildId() falls back to hardcoded values.
+        await refreshMaskAndBuildId();
+        const fresh = await getMaskAndBuildId();
+        console.log(`[worker] using ${fresh.source} MASK=${fresh.mask.slice(0,16)}... BUILD_ID=${fresh.buildId}`);
 
         // Re-fetch fresh __aaCrypto + re-derive key + re-sign + retry the API call
         const freshCrypto = await getAaCryptoAndKey(showId, episodeString, translationType);
-        const freshAaReq = await buildAaReq(queryHash, freshCrypto.aaCrypto.epoch, freshCrypto.aesKey);
+        const freshAaReq = await buildAaReq(queryHash, freshCrypto.aaCrypto.epoch, freshCrypto.aesKey, fresh.buildId);
 
         const retryRes = await fetch(ALLANIME_API, {
           method: "POST",
@@ -408,7 +604,7 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             Referer: "https://mkissa.to/",
             Origin: "https://mkissa.to",
-            "x-build-id": BUILD_ID,
+            "x-build-id": fresh.buildId,
           },
           body: JSON.stringify({
             query: EPISODE_QUERY,
