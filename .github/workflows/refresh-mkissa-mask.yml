@@ -54,12 +54,52 @@ jobs:
           set -euo pipefail
           node <<'DISCOVERY_SCRIPT' > /tmp/discovery-result.json
           // Crawl mkissa.to's SvelteKit bundle to find the current MASK and BUILD_ID.
-          // Mirrors the Worker's discoverMaskFromMkissa() function.
+          // Mirrors the Worker's discoverMaskFromMkissa() + extractMaskAndBuildId().
+          //
+          // Robust strategy (handles all observed pattern shapes):
+          //   1. Find the ONLY 64-hex string literal in the chunk → that's the MASK
+          //   2. Find buildId:<var> or x-build-id":<var> → that var holds the BUILD_ID
+          //   3. Look up that var's assignment: either <var>="<N>" or
+          //      <var>=_t(N)!=="string"?"<N>":""  → extract the number
           const MKISSA_ORIGIN = "https://mkissa.to/";
           const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-          const MASK_PATTERN = /const\s+[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*\s*\(\s*\d+\s*\)\s*!==\s*"string"\s*\?\s*"([0-9a-fA-F]{64})"\s*:\s*""/;
-          const BUILD_ID_NEAR_MASK_PATTERN = /,([A-Za-z_$][\w$]*)\s*=\s*"(\d{1,3})"/;
+          const HEX_64_PATTERN = /"([0-9a-fA-F]{64})"/;
+          const BUILD_ID_REF_PATTERN = /(?:buildId|x-build-id")\s*:\s*([A-Za-z_$][\w$]*)/g;
+          function makeBuildIdDirectPattern(varName) {
+            const v = varName.replace(/\$/g, "\\$");
+            return new RegExp("(?:const|var|let|,)\\s*" + v + '\\s*=\\s*"(\\d{1,3})"');
+          }
+          function makeBuildIdWrappedPattern(varName) {
+            const v = varName.replace(/\$/g, "\\$");
+            return new RegExp(v + '\\s*=\\s*[A-Za-z_$][\\w$]*\\(\\s*\\d+\\s*\\)\\s*!==\\s*"string"\\s*\\?\\s*"(\\d{1,3})"');
+          }
+
+          function extractMaskAndBuildId(src) {
+            const hexMatch = src.match(HEX_64_PATTERN);
+            if (!hexMatch) return null;
+            const mask = hexMatch[1];
+            const buildIdRefs = [...src.matchAll(BUILD_ID_REF_PATTERN)];
+            if (buildIdRefs.length === 0) return { mask, buildId: null };
+            const candidates = [];
+            const seenVars = new Set();
+            for (const ref of buildIdRefs) {
+              const varName = ref[1];
+              if (seenVars.has(varName)) continue;
+              seenVars.add(varName);
+              const directPat = makeBuildIdDirectPattern(varName);
+              const directMatch = src.match(directPat);
+              if (directMatch) { candidates.push(directMatch[1]); continue; }
+              const wrappedPat = makeBuildIdWrappedPattern(varName);
+              const wrappedMatch = src.match(wrappedPat);
+              if (wrappedMatch) candidates.push(wrappedMatch[1]);
+            }
+            if (candidates.length === 0) return { mask, buildId: null };
+            const counts = {};
+            for (const c of candidates) counts[c] = (counts[c] || 0) + 1;
+            const buildId = candidates.sort((a, b) => counts[b] - counts[a])[0];
+            return { mask, buildId };
+          }
 
           function resolveChunkUrl(rel, baseUrl) {
             if (rel.startsWith("http://") || rel.startsWith("https://")) return rel;
@@ -106,7 +146,7 @@ jobs:
               } catch (e) { console.error(`entry fetch failed ${url}: ${e.message}`); }
             }));
 
-            // 4. Fetch chunks in parallel, search for MASK
+            // 4. Fetch chunks in parallel, search for MASK + BUILD_ID
             const candidates = [...chunkUrls];
             console.log(`Found ${candidates.length} chunk URLs to search`);
             const results = await Promise.all(candidates.map(async (url) => {
@@ -114,20 +154,18 @@ jobs:
                 const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "*/*" } });
                 if (!res.ok) return null;
                 const src = await res.text();
-                const maskMatch = src.match(MASK_PATTERN);
-                if (!maskMatch) return null;
-                const afterMask = src.slice(maskMatch.index, maskMatch.index + 300);
-                const buildIdMatch = afterMask.match(BUILD_ID_NEAR_MASK_PATTERN);
+                const extracted = extractMaskAndBuildId(src);
+                if (!extracted || !extracted.buildId) return null;
                 return {
-                  mask: maskMatch[1],
-                  buildId: buildIdMatch ? buildIdMatch[2] : null,
+                  mask: extracted.mask,
+                  buildId: extracted.buildId,
                   chunk: url.split("/").pop(),
                 };
               } catch { return null; }
             }));
 
             const found = results.find(r => r !== null);
-            if (!found) throw new Error("MASK not found in any chunk — pattern shape may have changed");
+            if (!found) throw new Error("MASK/BUILD_ID not found in any chunk — pattern shape may have changed again. Update extractMaskAndBuildId() in both worker.js and this workflow.");
             if (!found.buildId) throw new Error(`MASK found in ${found.chunk} but BUILD_ID missing`);
 
             console.log(`✓ MASK=${found.mask.slice(0,16)}... BUILD_ID=${found.buildId} (from ${found.chunk})`);

@@ -41,8 +41,8 @@
 //     regexes in discoverMaskFromMkissa() and the fallback values here, then
 //     redeploy)
 // Last manual verification: 2026-07-11
-const FALLBACK_MASK_HEX = "f5dc46e6f42968c5ed0eab602d6ae8f2107991006f02876947e64fcb75d53da6";
-const FALLBACK_BUILD_ID = "13";
+const FALLBACK_MASK_HEX = "52735823afe9a3eb96958a8b8981254d8b70d2ebc3ae1999960b1a7ab7fbbe5b";
+const FALLBACK_BUILD_ID = "20";
 
 // Runtime cache for discovered MASK/BUILD_ID. Lives for the lifetime of the
 // Worker isolate (cross-request within the same isolate). TTL is long because
@@ -246,11 +246,96 @@ async function computeQueryHash(queryStr) {
 //      each for the MASK pattern, short-circuit on first hit
 // Total: ~13 subrequests, well under the 50-subrequest free-tier limit.
 
-// Pattern: const $n=_t(460)!=="string"?"<64-hex>":""
-// Variable names are minified, so we match the SHAPE not the names.
-const MASK_PATTERN = /const\s+[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*\s*\(\s*\d+\s*\)\s*!==\s*"string"\s*\?\s*"([0-9a-fA-F]{64})"\s*:\s*""/;
-// Pattern (right after the MASK): ,zr="13"  — BUILD_ID is the next assignment
-const BUILD_ID_NEAR_MASK_PATTERN = /,([A-Za-z_$][\w$]*)\s*=\s*"(\d{1,3})"/;
+// Robust pattern matching for MASK and BUILD_ID.
+//
+// mkissa.to's minifier changes the exact shape of these assignments across builds.
+// Observed shapes so far:
+//
+//   Build A (2026-07-08, BUILD_ID=9):
+//     const $n=_t(460)!=='string'?"<MASK_HEX>":"",zr="9"
+//     buildId:zr, x-build-id:zr
+//     → MASK wrapped in _t() check, BUILD_ID is plain string
+//
+//   Build B (2026-07-11, BUILD_ID=13):
+//     const $n=_t(460)!=='string'?"<MASK_HEX>":"",zr="13"
+//     buildId:zr, x-build-id:zr  (same shape, different values)
+//
+//   Build C (2026-07-15+, BUILD_ID=20):
+//     const Ju="<MASK_HEX>",sr=_t(483)!=='string'?"20":""
+//     buildId:sr, x-build-id:sr
+//     → MASK is plain string, BUILD_ID wrapped in _t() check (shapes swapped!)
+//
+// Robust strategy: instead of matching one exact shape, we:
+//   1. Find the ONLY 64-hex string literal in the chunk → that's the MASK
+//   2. Find buildId:<var> or x-build-id":<var> → that var holds the BUILD_ID
+//   3. Look up that var's assignment: either <var>="<N>" or
+//      <var>=_t(N)!=='string'?"<N>":""  → extract the number
+//
+// This handles all observed shapes and should handle future variations as long
+// as (a) the MASK remains the only 64-hex literal and (b) the BUILD_ID remains
+// a small integer string referenced via buildId: or x-build-id.
+
+// Any 64-hex string literal (with word boundaries on both sides)
+const HEX_64_PATTERN = /"([0-9a-fA-F]{64})"/;
+// References like  buildId:<var>  or  x-build-id":<var>
+const BUILD_ID_REF_PATTERN = /(?:buildId|x-build-id")\s*:\s*([A-Za-z_$][\w$]*)/g;
+// Direct assignment: <var>="<digits>"  (optionally prefixed with const|var|let|,)
+function makeBuildIdDirectPattern(varName) {
+  const v = varName.replace(/\$/g, "\\$");
+  return new RegExp("(?:const|var|let|,)\\s*" + v + '\\s*=\\s*"(\\d{1,3})"');
+}
+// Wrapped assignment: <var>=_t(N)!=='string'?"<digits>":""
+function makeBuildIdWrappedPattern(varName) {
+  const v = varName.replace(/\$/g, "\\$");
+  return new RegExp(v + '\\s*=\\s*[A-Za-z_$][\\w$]*\\(\\s*\\d+\\s*\\)\\s*!==\\s*"string"\\s*\\?\\s*"(\\d{1,3})"');
+}
+
+// Extract MASK and BUILD_ID from a chunk's source code using the robust strategy.
+// Returns { mask, buildId } or null if not found.
+function extractMaskAndBuildId(src) {
+  // 1. Find the (only) 64-hex string literal
+  const hexMatch = src.match(HEX_64_PATTERN);
+  if (!hexMatch) return null;
+  const mask = hexMatch[1];
+
+  // 2. Find all buildId:<var> references and collect candidate values
+  const buildIdRefs = [...src.matchAll(BUILD_ID_REF_PATTERN)];
+  if (buildIdRefs.length === 0) return { mask, buildId: null };
+
+  // For each referenced var, try to find its assignment
+  const candidates = [];
+  const seenVars = new Set();
+  for (const ref of buildIdRefs) {
+    const varName = ref[1];
+    if (seenVars.has(varName)) continue;
+    seenVars.add(varName);
+
+    // Try direct assignment first: <var>="<N>"
+    const directPat = makeBuildIdDirectPattern(varName);
+    const directMatch = src.match(directPat);
+    if (directMatch) {
+      candidates.push(directMatch[1]);
+      continue;
+    }
+
+    // Try wrapped assignment: <var>=_t(N)!=='string'?"<N>":""
+    const wrappedPat = makeBuildIdWrappedPattern(varName);
+    const wrappedMatch = src.match(wrappedPat);
+    if (wrappedMatch) {
+      candidates.push(wrappedMatch[1]);
+    }
+  }
+
+  if (candidates.length === 0) return { mask, buildId: null };
+
+  // Pick the most common candidate (in case multiple vars are referenced,
+  // they should all resolve to the same BUILD_ID value)
+  const counts = {};
+  for (const c of candidates) counts[c] = (counts[c] || 0) + 1;
+  const buildId = candidates.sort((a, b) => counts[b] - counts[a])[0];
+
+  return { mask, buildId };
+}
 
 function resolveChunkUrl(rel, baseUrl) {
   if (rel.startsWith("http://") || rel.startsWith("https://")) return rel;
@@ -324,9 +409,8 @@ async function discoverMaskFromMkissa() {
     throw new Error("no /chunks/ URLs found in entry chunks");
   }
 
-  // Step 4: Fetch all chunks in parallel, search each for the MASK pattern.
-  // Short-circuit on first hit (Promise.any + AbortController would be cleaner
-  // but Promise.all + find works fine for ~10 chunks).
+  // Step 4: Fetch all chunks in parallel, search each for MASK + BUILD_ID
+  // using the robust extractor (handles all observed pattern shapes).
   const results = await Promise.all(
     candidateUrls.map(async (url) => {
       try {
@@ -335,15 +419,11 @@ async function discoverMaskFromMkissa() {
         });
         if (!res.ok) return null;
         const src = await res.text();
-        const maskMatch = src.match(MASK_PATTERN);
-        if (!maskMatch) return null;
-        // Found MASK! Now find BUILD_ID right after it.
-        // Pattern: const $n=_t(460)!=="string"?"<MASK>":"",zr="13"
-        const afterMask = src.slice(maskMatch.index, maskMatch.index + 300);
-        const buildIdMatch = afterMask.match(BUILD_ID_NEAR_MASK_PATTERN);
+        const extracted = extractMaskAndBuildId(src);
+        if (!extracted || !extracted.buildId) return null;
         return {
-          mask: maskMatch[1],
-          buildId: buildIdMatch ? buildIdMatch[2] : null,
+          mask: extracted.mask,
+          buildId: extracted.buildId,
           chunkUrl: url,
         };
       } catch (e) {
@@ -354,11 +434,7 @@ async function discoverMaskFromMkissa() {
 
   const found = results.find((r) => r !== null);
   if (!found) {
-    throw new Error("MASK pattern not found in any crawled chunk — pattern shape may have changed");
-  }
-
-  if (!found.buildId) {
-    throw new Error(`MASK found in ${found.chunkUrl} but BUILD_ID not found nearby`);
+    throw new Error("MASK/BUILD_ID not found in any crawled chunk — pattern shape may have changed again. Update extractMaskAndBuildId() in worker.js and the matching logic in refresh-mkissa-mask.yml");
   }
 
   console.log(
@@ -578,11 +654,20 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
       const err = json.errors[0];
       const errCode = err.extensions?.code ?? "";
 
-      // If crypto is rejected (STALE, BUILD_MISMATCH, etc.), clear cache and RETRY
-      // with fresh __aaCrypto AND freshly-discovered MASK/BUILD_ID.
-      // This handles key rotation without failing — the Worker self-heals.
-      if (errCode.startsWith("AA_CRYPTO")) {
-        console.warn(`[worker] ${errCode} — refreshing __aaCrypto AND MASK/BUILD_ID, then retrying...`);
+      // Self-heal trigger: retry on AA_CRYPTO* errors (explicit crypto rejection)
+      // OR on ANY error if we're currently using FALLBACK values (which may be stale
+      // due to a mkissa.to build rotation). AllAnime's API sometimes returns
+      // INTERNAL_SERVER_ERROR instead of AA_CRYPTO_STALE for crypto mismatches,
+      // so we can't rely on the error code alone.
+      //
+      // We only retry ONCE per request — if the retry also fails, it's a real error
+      // (e.g. "No episode" for a non-existent showId), not a crypto issue.
+      const currentMaskState = await getMaskAndBuildId();
+      const currentSource = currentMaskState.source;
+      const shouldSelfHeal = errCode.startsWith("AA_CRYPTO") || currentSource === "fallback";
+
+      if (shouldSelfHeal) {
+        console.warn(`[worker] ${errCode} (source=${currentSource}) — refreshing __aaCrypto AND MASK/BUILD_ID, then retrying...`);
         aaCryptoCache = null;
         discoveredCrypto = null;
 
@@ -592,6 +677,17 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
         const fresh = await getMaskAndBuildId();
         console.log(`[worker] using ${fresh.source} MASK=${fresh.mask.slice(0,16)}... BUILD_ID=${fresh.buildId}`);
 
+        // Optimization: if discovery returned the SAME values we were already using,
+        // the error is NOT a crypto issue (e.g. it's a genuine "No episode" for a
+        // fake showId). Skip the retry to save ~1s of latency.
+        if (
+          currentSource === "fallback" &&
+          fresh.source === "discovered" &&
+          fresh.mask === currentMaskState.mask &&
+          fresh.buildId === currentMaskState.buildId
+        ) {
+          console.log("[worker] discovered values match fallback — error is not crypto-related, skipping retry");
+        } else {
         // Re-fetch fresh __aaCrypto + re-derive key + re-sign + retry the API call
         const freshCrypto = await getAaCryptoAndKey(showId, episodeString, translationType);
         const freshAaReq = await buildAaReq(queryHash, freshCrypto.aaCrypto.epoch, freshCrypto.aesKey, fresh.buildId);
@@ -644,6 +740,7 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
         }
 
         return { sources: null, error: `AllAnime GraphQL: ${err.message} (${errCode}) — retry also failed` };
+        } // end else (retry block)
       }
 
       return { sources: null, error: `AllAnime GraphQL: ${err.message} (${errCode})` };
