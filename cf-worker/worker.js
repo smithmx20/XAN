@@ -41,8 +41,8 @@
 //     regexes in discoverMaskFromMkissa() and the fallback values here, then
 //     redeploy)
 // Last manual verification: 2026-07-12
-const FALLBACK_MASK_HEX = "c79454d9005ec111ed887bca2104a6711d16b37eb8ccfda10148599d632d7c99";
-const FALLBACK_BUILD_ID = "21";
+const FALLBACK_MASK_HEX = "788a01baa428a3966ec82ae1579059f8b7ab172612eea1d2263fe0bf0f8860bd";
+const FALLBACK_BUILD_ID = "23";
 
 // Runtime cache for discovered MASK/BUILD_ID. Lives for the lifetime of the
 // Worker isolate (cross-request within the same isolate). TTL is long because
