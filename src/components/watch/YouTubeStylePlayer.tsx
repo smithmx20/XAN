@@ -1328,7 +1328,12 @@ export function YouTubeStylePlayer({
         <iframe
           src={streamUrl}
           className="w-full h-full"
-          style={enhancer.active ? { filter: enhancer.filterCss } : undefined}
+          // ✅ Use the iframe-safe filter CSS (no SVG url() reference).
+          // Cross-origin iframes can't use SVG filters — the url() part
+          // would fail and cause the browser to drop the ENTIRE filter
+          // string, making even basic CSS filters (brightness, contrast,
+          // etc.) stop working. See buildEnhancerFilterCssForIframe.
+          style={enhancer.active ? { filter: enhancer.filterCssForIframe } : undefined}
           allow="autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; gyroscope; web-share"
           allowFullScreen
           referrerPolicy="origin"

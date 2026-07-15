@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Nunito, Inter, Outfit } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ReducedMotionEnforcer } from "@/components/ReducedMotionEnforcer";
+import { CommandMenuMount } from "@/components/command/CommandMenu";
 import "./globals.css";
 
 // ✅ Font variables — available in CSS via var(--font-nunito), etc.
@@ -62,6 +63,8 @@ export default function RootLayout({
         >
           <ReducedMotionEnforcer />
           {children}
+          {/* ✅ Command Menu (⌘K) — mounted globally so it's available on every page */}
+          <CommandMenuMount />
         </ThemeProvider>
       </body>
     </html>

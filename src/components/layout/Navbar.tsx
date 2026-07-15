@@ -2,21 +2,23 @@
 
 // components/layout/Navbar.tsx
 // ✅ "use client" — scroll listener + state
+// ✅ Command Menu trigger button between History and Search
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { Search, Menu, X, Play, Home as HomeIcon, Compass, History, Settings, Calendar, Library } from "lucide-react";
+import { Search, Menu, X, Play, Home as HomeIcon, Compass, History, Settings, Calendar, Library, Command } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { openCommandMenu } from "@/components/command/CommandMenu";
 
 const NAV_LINKS = [
   { label: "Home", href: "/home", icon: HomeIcon },
   { label: "Discover", href: "/discover", icon: Compass },
   { label: "Schedule", href: "/schedule", icon: Calendar },
-  { label: "My Library", href: "/list", icon: Library },
+  { label: "Library", href: "/list", icon: Library },
   { label: "History", href: "/history", icon: History },
 ];
 
@@ -97,6 +99,30 @@ export function Navbar() {
 
         {/* Search + actions */}
         <div className="flex items-center gap-2">
+          {/* ✅ Command Menu trigger button (between History nav and Search) */}
+          <button
+            onClick={openCommandMenu}
+            className="hidden md:flex items-center gap-2 h-9 px-3 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-xan-card transition-colors border border-xan-border/60 hover:border-xan-crimson/30 group"
+            aria-label="Open command menu"
+            title="Open command menu (⌘K or /)"
+          >
+            <Command className="h-4 w-4 group-hover:text-xan-crimson transition-colors" />
+            <kbd className="text-[10px] font-mono px-1 py-0.5 rounded bg-white/5 border border-white/10 text-muted-foreground/80">
+              ⌘K
+            </kbd>
+          </button>
+
+          {/* ✅ Mobile Command Menu trigger */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={openCommandMenu}
+            className="md:hidden"
+            aria-label="Open command menu"
+          >
+            <Command className="h-5 w-5" />
+          </Button>
+
           {/* Desktop search */}
           <form
             onSubmit={handleSearchSubmit}

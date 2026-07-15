@@ -253,3 +253,83 @@ export function formatStatus(status: Anime["status"]): string {
   };
   return map[status];
 }
+
+// ─── Character Detail Schemas ───
+export const FuzzyDateSchema = z
+  .object({
+    year: z.number().nullable().default(null),
+    month: z.number().nullable().default(null),
+    day: z.number().nullable().default(null),
+  })
+  .nullable()
+  .default(null);
+
+export type FuzzyDate = z.infer<typeof FuzzyDateSchema>;
+
+export const CharacterMediaNodeSchema = z.object({
+  id: z.number(),
+  title: z.object({
+    romaji: z.string().nullable().default(null),
+    english: z.string().nullable().default(null),
+  }),
+  coverImage: z
+    .object({
+      large: z.string().nullable().default(null),
+      color: z.string().nullable().default(null),
+    })
+    .nullable()
+    .default(null),
+  seasonYear: z.number().nullable().default(null),
+  format: z.string().nullable().default(null),
+  averageScore: z.number().nullable().default(null),
+  episodes: z.number().nullable().default(null),
+});
+
+export const CharacterMediaEdgeSchema = z.object({
+  characterRole: z.string().nullable().default(null),
+  node: CharacterMediaNodeSchema,
+});
+
+export const CharacterDetailSchema = z.object({
+  id: z.number(),
+  name: z.object({
+    first: z.string().nullable().default(null),
+    last: z.string().nullable().default(null),
+    full: z.string().nullable().default(null),
+    native: z.string().nullable().default(null),
+    alternative: z.array(z.string()).default([]),
+  }),
+  image: z
+    .object({
+      large: z.string().nullable().default(null),
+      medium: z.string().nullable().default(null),
+    })
+    .nullable()
+    .default(null),
+  description: z.string().nullable().default(null),
+  dateOfBirth: FuzzyDateSchema,
+  age: z.string().nullable().default(null),
+  gender: z.string().nullable().default(null),
+  bloodType: z.string().nullable().default(null),
+  media: z
+    .object({
+      edges: z.array(CharacterMediaEdgeSchema).default([]),
+    })
+    .nullable()
+    .default(null),
+});
+
+export type CharacterDetail = z.infer<typeof CharacterDetailSchema>;
+export type CharacterMediaEdge = z.infer<typeof CharacterMediaEdgeSchema>;
+
+// ─── Helper: Format fuzzy date (YYYY-MM-DD, partial-safe) ───
+export function formatFuzzyDate(date: FuzzyDate | null | undefined): string {
+  if (!date) return "Unknown";
+  const { year, month, day } = date;
+  if (!year && !month && !day) return "Unknown";
+  const parts: string[] = [];
+  if (year) parts.push(String(year));
+  if (month) parts.push(String(month).padStart(2, "0"));
+  if (day) parts.push(String(day).padStart(2, "0"));
+  return parts.join("-") || "Unknown";
+}

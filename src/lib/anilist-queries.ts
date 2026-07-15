@@ -161,3 +161,46 @@ export const ANIME_DETAIL_QUERY = `
     }
   }
 `;
+
+// ✅ Character detail query — fetches character info + their anime appearances
+export const CHARACTER_QUERY = `
+  query ($id: Int) {
+    Character(id: $id) {
+      id
+      name {
+        first
+        last
+        full
+        native
+        alternative
+      }
+      image {
+        large
+        medium
+      }
+      description
+      dateOfBirth {
+        year
+        month
+        day
+      }
+      age
+      gender
+      bloodType
+      media(perPage: 25, sort: POPULARITY_DESC, type: ANIME) {
+        edges {
+          characterRole
+          node {
+            id
+            title { romaji english }
+            coverImage { large color }
+            seasonYear
+            format
+            averageScore
+            episodes
+          }
+        }
+      }
+    }
+  }
+`;

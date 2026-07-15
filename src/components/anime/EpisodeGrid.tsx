@@ -1,24 +1,18 @@
 "use client";
 
 // components/anime/EpisodeGrid.tsx
-//
-// ✅ Episode unreleased grayout: uses AniList's `nextAiringEpisode` to determine
-//    which episodes haven't aired yet. Unreleased episodes are shown in grayscale,
-//    non-clickable, with a small "Upcoming" badge and tooltip showing when they air.
-//
-// ✅ AllAnime fallback: when AniList's `episodeCount` is null (unknown), uses
-//    the shared useAllAnimeInfo hook to get AllAnime's availableEpisodes count.
-//    Deduped with the watch page's AllAnime lookup.
-//
-// ✅ Windowed pagination (replaces the old 200-episode cap). Renders a fixed
-//    PAGE_SIZE slice at a time with Prev/Next + "Jump to episode" input.
-//    Supports 1100+ episode shows (One Piece, Detective Conan, etc.).
+// ✅ Premium section title with accent line
+// ✅ Glass search input with focus glow
+// ✅ Glass container for episode grid
+// ✅ Episode tiles as pill buttons
+// ✅ Pagination as pill buttons
+// ✅ Jump-to-episode input
+// ✅ SOON badge for unreleased episodes
 
 import Link from "next/link";
-import { useState, useMemo } from "react";
-import { Play, Search, Clock, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { Play, Search, Clock, Loader2, ChevronLeft, ChevronRight, Hash } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useAllAnimeInfo } from "@/hooks/useAllAnimeInfo";
 import type { NextAiringEpisode } from "@/types/anime";
 
@@ -58,6 +52,7 @@ export function EpisodeGrid({
   const [query, setQuery] = useState("");
   const [pageStart, setPageStart] = useState(1); // 1-indexed, inclusive
   const [jumpValue, setJumpValue] = useState("");
+  const gridRef = useRef<HTMLDivElement>(null);
 
   // ✅ Only fetch from AllAnime when AniList's episode count is unknown.
   const needsAllAnime = episodeCount == null && animeTitle.trim().length > 0;
@@ -100,6 +95,11 @@ export function EpisodeGrid({
 
   const displayEpisodes = searchResults ?? pagedEpisodes;
 
+  // ✅ Scroll grid to top when page changes or search is cleared.
+  useEffect(() => {
+    if (gridRef.current) gridRef.current.scrollTo({ top: 0, behavior: "smooth" });
+  }, [pageStart, query]);
+
   const handleJump = () => {
     const n = parseInt(jumpValue, 10);
     if (!isNaN(n) && n >= 1 && n <= total) {
@@ -119,22 +119,37 @@ export function EpisodeGrid({
   };
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="text-lg font-semibold font-display text-foreground">Episodes</h2>
-        <div className="flex items-center gap-2">
-          {/* Jump to episode */}
-          <div className="relative w-32 sm:w-40">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-            <Input
-              type="text"
-              placeholder="Find..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="pl-8 h-8 text-sm bg-xan-card border-xan-border"
-            />
-          </div>
+    <section className="space-y-4">
+      {/* ✅ Premium section title with accent line */}
+      <div className="flex items-center gap-3">
+        <div className="h-5 w-1 rounded-full bg-gradient-to-b from-xan-crimson to-xan-violet" />
+        <h2 className="text-lg font-semibold font-display text-foreground">
+          Episodes
+        </h2>
+        {!isUnknown && (
+          <span className="text-xs text-muted-foreground ml-auto">
+            {total} total
+          </span>
+        )}
+      </div>
+
+      {/* ✅ Glass search input with focus glow */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search episode number…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full h-11 pl-10 pr-4 rounded-full bg-white/[0.04] backdrop-blur-xl border border-white/8 text-sm text-foreground placeholder:text-muted-foreground/70 outline-none transition-all focus:border-xan-crimson/40 focus:bg-white/[0.07] focus:shadow-[0_0_0_4px_rgba(233,69,96,0.12)]"
+          />
         </div>
+        <span className="text-xs text-muted-foreground hidden sm:inline">
+          {searchResults
+            ? `${searchResults.length} match${searchResults.length !== 1 ? "es" : ""}`
+            : `Page ${currentPage} of ${totalPages}`}
+        </span>
       </div>
 
       {/* Status messages */}
@@ -170,69 +185,88 @@ export function EpisodeGrid({
         </p>
       )}
 
-      {/* Search results OR paged grid */}
+      {/* ✅ Pagination as pill buttons (when needed) */}
       {searchResults ? (
         <p className="text-xs text-muted-foreground italic">
           {searchResults.length} match{searchResults.length !== 1 ? "es" : ""} for &ldquo;{query}&rdquo;
         </p>
       ) : total > PAGE_SIZE ? (
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           <p className="text-xs text-muted-foreground">
-            Episodes <span className="text-foreground/70 font-medium">{pageStart}–{pageEnd}</span> of {total}
+            Episodes{" "}
+            <span className="text-foreground/70 font-medium">
+              {pageStart}–{pageEnd}
+            </span>{" "}
+            of {total}
           </p>
           <div className="flex items-center gap-1 ml-auto">
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={goToPrevPage}
               disabled={currentPage === 1}
-              className="h-7 px-2 text-xs bg-xan-card border-xan-border disabled:opacity-40"
+              className={cn(
+                "h-8 px-3 text-xs rounded-full border transition-all flex items-center gap-1",
+                currentPage === 1
+                  ? "opacity-40 cursor-not-allowed border-white/8 text-muted-foreground"
+                  : "border-white/8 bg-white/[0.04] text-foreground hover:border-xan-crimson/40 hover:bg-xan-crimson/10 hover:text-xan-crimson",
+              )}
             >
-              <ChevronLeft className="h-3 w-3 mr-0.5" />
+              <ChevronLeft className="h-3 w-3" />
               Prev
-            </Button>
-            <span className="text-xs text-muted-foreground px-1">
+            </button>
+            <span className="text-xs text-muted-foreground px-2 font-mono">
               {currentPage}/{totalPages}
             </span>
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={goToNextPage}
               disabled={currentPage === totalPages}
-              className="h-7 px-2 text-xs bg-xan-card border-xan-border disabled:opacity-40"
+              className={cn(
+                "h-8 px-3 text-xs rounded-full border transition-all flex items-center gap-1",
+                currentPage === totalPages
+                  ? "opacity-40 cursor-not-allowed border-white/8 text-muted-foreground"
+                  : "border-white/8 bg-white/[0.04] text-foreground hover:border-xan-crimson/40 hover:bg-xan-crimson/10 hover:text-xan-crimson",
+              )}
             >
               Next
-              <ChevronRight className="h-3 w-3 ml-0.5" />
-            </Button>
+              <ChevronRight className="h-3 w-3" />
+            </button>
           </div>
-          {/* Jump to episode */}
-          <div className="flex items-center gap-1 ml-2">
-            <Input
-              type="number"
-              min={1}
-              max={total}
-              value={jumpValue}
-              onChange={(e) => setJumpValue(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleJump()}
-              placeholder="Jump to…"
-              className="w-20 h-7 text-xs bg-xan-card border-xan-border"
-            />
-            <Button
-              variant="ghost"
-              size="sm"
+          {/* ✅ Jump to episode input */}
+          <div className="flex items-center gap-1 ml-1">
+            <div className="relative">
+              <Hash className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+              <input
+                type="number"
+                min={1}
+                max={total}
+                value={jumpValue}
+                onChange={(e) => setJumpValue(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleJump()}
+                placeholder="Jump…"
+                className="w-20 h-8 pl-7 pr-2 text-xs rounded-full bg-white/[0.04] border border-white/8 text-foreground outline-none focus:border-xan-crimson/40 focus:bg-white/[0.07]"
+              />
+            </div>
+            <button
               onClick={handleJump}
               disabled={!jumpValue}
-              className="h-7 px-2 text-xs bg-xan-card border-xan-border disabled:opacity-40"
+              className={cn(
+                "h-8 px-3 text-xs rounded-full border transition-all",
+                !jumpValue
+                  ? "opacity-40 cursor-not-allowed border-white/8 text-muted-foreground"
+                  : "border-xan-crimson/30 bg-xan-crimson/10 text-xan-crimson hover:bg-xan-crimson/20",
+              )}
             >
               Go
-            </Button>
+            </button>
           </div>
         </div>
       ) : null}
 
-      {/* Episode grid (windowed) */}
-      <div className="h-72 overflow-y-auto rounded-lg border border-xan-border bg-xan-card/50 xan-scroll">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-3">
+      {/* ✅ Glass container for episode grid */}
+      <div
+        ref={gridRef}
+        className="h-80 overflow-y-auto rounded-2xl border border-white/8 bg-white/[0.03] backdrop-blur-sm xan-scroll"
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 p-3">
           {displayEpisodes.length > 0 ? (
             displayEpisodes.map((n) => {
               const isReleased = n <= latestAired;
@@ -249,14 +283,19 @@ export function EpisodeGrid({
                   <div
                     key={n}
                     title={airingHint}
-                    className="flex items-center justify-start h-auto py-2 px-3 bg-xan-card/30 border border-xan-border/50 text-left cursor-not-allowed opacity-50 grayscale select-none"
+                    className={cn(
+                      "flex items-center justify-between h-9 px-3 rounded-full text-xs border select-none cursor-not-allowed",
+                      isNext
+                        ? "bg-xan-crimson/10 border-xan-crimson/40 text-xan-crimson"
+                        : "bg-white/[0.02] border-white/8 text-muted-foreground opacity-60",
+                    )}
                   >
-                    <Clock className="h-3 w-3 text-muted-foreground mr-2 flex-shrink-0" />
-                    <span className="text-sm text-muted-foreground line-through decoration-muted-foreground/40">
-                      Episode {n}
+                    <span className="flex items-center gap-1.5 line-through decoration-muted-foreground/40">
+                      <Clock className="h-3 w-3" />
+                      Ep {n}
                     </span>
                     {isNext && (
-                      <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-xan-crimson/15 text-xan-crimson border border-xan-crimson/30 font-mono">
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-xan-crimson/20 text-xan-crimson border border-xan-crimson/40 font-mono font-bold tracking-wider">
                         SOON
                       </span>
                     )}
@@ -265,17 +304,19 @@ export function EpisodeGrid({
               }
 
               return (
-                <Button
+                <Link
                   key={n}
-                  variant="ghost"
-                  asChild
-                  className="justify-start h-auto py-2 px-3 bg-xan-card hover:bg-xan-card-hover border border-xan-border hover:border-xan-crimson/40 text-left"
+                  href={`/watch/${animeId}?ep=${n}`}
+                  className="group flex items-center justify-between h-9 px-3 rounded-full text-xs border border-white/8 bg-white/[0.04] text-foreground transition-all hover:border-xan-crimson/40 hover:bg-xan-crimson/10 hover:text-xan-crimson hover:shadow-[0_2px_12px_rgba(233,69,96,0.18)]"
                 >
-                  <Link href={`/watch/${animeId}?ep=${n}`}>
-                    <Play className="h-3 w-3 text-xan-crimson mr-2 flex-shrink-0" />
-                    <span className="text-sm text-foreground">Episode {n}</span>
-                  </Link>
-                </Button>
+                  <span className="flex items-center gap-1.5">
+                    <Play className="h-3 w-3 text-xan-crimson fill-xan-crimson" />
+                    Ep {n}
+                  </span>
+                  <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] uppercase tracking-wider">
+                    Play
+                  </span>
+                </Link>
               );
             })
           ) : (

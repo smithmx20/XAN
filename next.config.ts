@@ -49,6 +49,10 @@ const nextConfig: NextConfig = {
     "http://preview-chat-1503b6de-edb3-4a77-a46e-f7244dfab875.space-z.ai",
     "https://preview-1503b6de-edb3-4a77-a46e-f7244dfab875.space-z.ai",
     "http://preview-1503b6de-edb3-4a77-a46e-f7244dfab875.space-z.ai",
+    "https://preview-chat-168682a2-6d41-4e67-b7a7-6eec57165c6d.space-z.ai",
+    "http://preview-chat-168682a2-6d41-4e67-b7a7-6eec57165c6d.space-z.ai",
+    "https://preview-168682a2-6d41-4e67-b7a7-6eec57165c6d.space-z.ai",
+    "http://preview-168682a2-6d41-4e67-b7a7-6eec57165c6d.space-z.ai",
   ],
 };
 

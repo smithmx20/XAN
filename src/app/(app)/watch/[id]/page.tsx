@@ -36,7 +36,7 @@ import { useVideoEnhancer } from "@/hooks/useVideoEnhancer";
 import { useAllAnimeInfo } from "@/hooks/useAllAnimeInfo";
 import { VideoEnhancerPanel } from "@/components/watch/VideoEnhancerPanel";
 import { VideoEnhancerFilters } from "@/components/watch/VideoEnhancerFilters";
-import { ArrowLeft, Star, Clock, Calendar, Tv, Info, MonitorPlay, Wand2 } from "lucide-react";
+import { ArrowLeft, Star, Clock, Calendar, Tv, Info, MonitorPlay, Wand2, Eye, EyeOff } from "lucide-react";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -403,9 +403,12 @@ function WatchPageInner({ params }: PageProps) {
                 </div>
               )}
 
-              {/* ✅ Video Enhancer wand button — opens a standalone popover.
-                  Crimson dot shows when enhancer is active. */}
-              <div className="relative">
+              {/* ✅ Video Enhancer wand button + Eye toggle — both live outside
+                  the player. The wand opens a standalone enhancer popover.
+                  The eye button (right of the wand) toggles enhancer ON/OFF
+                  with the same animated Eye/EyeOff transition as the in-player
+                  versions. Crimson dot shows when enhancer is active. */}
+              <div className="relative flex items-center gap-1.5">
                 <button
                   onClick={() => setShowEnhancer((v) => !v)}
                   className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-all ${
@@ -426,6 +429,39 @@ function WatchPageInner({ params }: PageProps) {
                       aria-hidden="true"
                     />
                   )}
+                </button>
+
+                {/* ✅ Eye toggle — placed to the RIGHT of the Enhancer wand button.
+                    Same animated Eye/EyeOff transition + functionality as the
+                    in-player eye toggles. Toggles enhancer ON/OFF. */}
+                <button
+                  onClick={() => enhancer.toggleEnabled()}
+                  className={`relative flex items-center justify-center px-2.5 py-1.5 rounded-md border text-xs font-medium transition-all ${
+                    enhancer.state.enabled
+                      ? "bg-xan-crimson/15 border-xan-crimson/40 text-xan-crimson"
+                      : "bg-xan-card border-xan-border text-muted-foreground hover:text-foreground hover:bg-xan-card-hover"
+                  }`}
+                  aria-label={enhancer.state.enabled ? "Turn enhancer off" : "Turn enhancer on"}
+                  title={enhancer.state.enabled ? "Enhancer ON — click to turn off (E)" : "Enhancer OFF — click to turn on (E)"}
+                >
+                  <div className="relative w-4 h-4">
+                    {/* Eye (ON state) — fades + scales in when enabled */}
+                    <Eye
+                      className={`absolute inset-0 h-4 w-4 transition-all duration-300 ${
+                        enhancer.state.enabled
+                          ? "opacity-100 scale-100 rotate-0 text-xan-crimson drop-shadow-[0_0_3px_rgba(233,69,96,0.8)]"
+                          : "opacity-0 scale-50 rotate-90 text-white/40"
+                      }`}
+                    />
+                    {/* EyeOff (OFF state) — fades + scales in when disabled */}
+                    <EyeOff
+                      className={`absolute inset-0 h-4 w-4 transition-all duration-300 ${
+                        enhancer.state.enabled
+                          ? "opacity-0 scale-50 -rotate-90 text-white/40"
+                          : "opacity-100 scale-100 rotate-0 text-white/60"
+                      }`}
+                    />
+                  </div>
                 </button>
 
                 {/* ✅ Enhancer popover — anchored below the wand button.

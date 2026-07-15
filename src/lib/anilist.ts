@@ -10,10 +10,12 @@ import {
   PageInfoSchema,
   AnimeDetailSchema,
   AiringScheduleSchema,
+  CharacterDetailSchema,
   type Anime,
   type AnimeDetail,
   type AiringSchedule,
   type PageInfo,
+  type CharacterDetail,
 } from "@/types/anime";
 import {
   TRENDING_QUERY,
@@ -21,6 +23,7 @@ import {
   SEARCH_QUERY,
   ANIME_DETAIL_QUERY,
   AIRING_SCHEDULE_QUERY,
+  CHARACTER_QUERY,
 } from "./anilist-queries";
 import { isTag } from "./constants";
 import { z } from "zod";
@@ -259,5 +262,31 @@ export const fetchAiringSchedule = cache(
           total: null,
         },
   };
+});
+
+// ✅ Character Detail — fetches a single character + their anime appearances.
+//    Cached per-request via React `cache()` so generateMetadata and the page
+//    body don't double-fetch.
+export const fetchCharacter = cache(
+  async (id: number): Promise<{ data: CharacterDetail | null } | null> => {
+    const json = await fetchFromAniList(CHARACTER_QUERY, { id });
+    if (!json) return null;
+
+    const raw = (json as any)?.data?.Character;
+    if (!raw) {
+      console.warn("[AniList] Character response missing Character field");
+      return { data: null };
+    }
+
+    const parsed = CharacterDetailSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.error(
+        "[AniList] Character validation failed:",
+        parsed.error.issues,
+      );
+      return { data: null };
+    }
+
+    return { data: parsed.data };
   },
 );

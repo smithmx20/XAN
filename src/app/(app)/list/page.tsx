@@ -118,7 +118,7 @@ export default function LibraryPage() {
         <div className="space-y-1">
           <h1 className="text-2xl md:text-3xl font-display font-bold text-foreground flex items-center gap-2">
             <Library className="h-6 w-6 text-xan-crimson" />
-            My Library
+            Library
           </h1>
           <p className="text-sm text-muted-foreground">
             {isLoaded

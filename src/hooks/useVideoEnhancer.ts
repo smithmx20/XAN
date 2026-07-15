@@ -307,6 +307,31 @@ export function isEnhancerActive(s: EnhancerState): boolean {
  * when the user only changed CSS-filter values.
  */
 export function buildEnhancerFilterCss(s: EnhancerState): string {
+  return buildEnhancerFilterCssInternal(s, /* includeSvg */ true);
+}
+
+/**
+ * Build a CSS-only `filter` string (no SVG `url()` reference) for elements
+ * that can't use SVG filters — namely **cross-origin iframes**.
+ *
+ * Why: SVG filters (`url(#xan-enhancer)`) require reading the element's pixel
+ * data. Cross-origin iframes are "tainted" — browsers block pixel reading for
+ * security. When the `url()` part of a CSS filter chain fails, the browser
+ * drops the ENTIRE filter string, so even basic CSS filters (brightness,
+ * contrast, etc.) stop working on iframes.
+ *
+ * This function returns only the CSS filter functions (brightness, contrast,
+ * saturation, hue, blur, sepia, grayscale) — which DO work on cross-origin
+ * iframes because they're GPU-composited and don't need pixel access.
+ *
+ * Trade-off: gamma and sharpen won't affect iframe players (fundamental
+ * browser limitation), but the other 7 controls will work.
+ */
+export function buildEnhancerFilterCssForIframe(s: EnhancerState): string {
+  return buildEnhancerFilterCssInternal(s, /* includeSvg */ false);
+}
+
+function buildEnhancerFilterCssInternal(s: EnhancerState, includeSvg: boolean): string {
   if (!isEnhancerActive(s)) return "none";
 
   const parts: string[] = [];
@@ -321,7 +346,8 @@ export function buildEnhancerFilterCss(s: EnhancerState): string {
   // ✅ Only chain the SVG filter when gamma or sharpen is non-default.
   // Identity SVG filter passes are wasteful (extra rasterization pass).
   // ✅ Bug fix: use epsilon comparison for gamma (consistent with isEnhancerActive).
-  if (Math.abs(s.gamma - 1.0) > 0.001 || s.sharpen !== 0) {
+  // ✅ Skip the SVG url() for iframes — see buildEnhancerFilterCssForIframe docs.
+  if (includeSvg && (Math.abs(s.gamma - 1.0) > 0.001 || s.sharpen !== 0)) {
     parts.push("url(#xan-enhancer)");
   }
 
@@ -427,6 +453,9 @@ export function useVideoEnhancer() {
   // re-render unless the value actually changes).
   // ✅ Declared BEFORE the safety effect below (which depends on `active`).
   const filterCss = useMemo(() => buildEnhancerFilterCss(state), [state]);
+  // ✅ Iframe-safe variant: CSS-only filters (no SVG url() reference).
+  // Cross-origin iframes can't use SVG filters — see buildEnhancerFilterCssForIframe.
+  const filterCssForIframe = useMemo(() => buildEnhancerFilterCssForIframe(state), [state]);
   const active = useMemo(() => isEnhancerActive(state), [state]);
 
   // ✅ Safety: if the enhancer gets turned off while peeking, clear peeking
@@ -442,6 +471,7 @@ export function useVideoEnhancer() {
   // When peeking, we suppress the filter entirely (show original).
   // When not active (or not enabled), filterCss is already "none".
   const effectiveFilterCss = peeking && active ? "none" : filterCss;
+  const effectiveFilterCssForIframe = peeking && active ? "none" : filterCssForIframe;
   const effectiveActive = active && !peeking;
 
   // ──────────────────────────────────────────────────────────────
@@ -535,6 +565,9 @@ export function useVideoEnhancer() {
     reset,
     toggleEnabled,
     filterCss: effectiveFilterCss,
+    // ✅ Iframe-safe filter CSS (no SVG url() reference). Use this on <iframe>
+    // elements instead of `filterCss` — see buildEnhancerFilterCssForIframe.
+    filterCssForIframe: effectiveFilterCssForIframe,
     active: effectiveActive,
     // ✅ Expose the raw (non-peeked) state for the SVG defs — we still want
     // the SVG filter to stay mounted while peeking so releasing the button

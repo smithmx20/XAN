@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AnimeStatusButton } from "@/components/anime/AnimeStatusButton";
 import { BookmarkButton } from "@/components/cards/BookmarkButton";
+import { BackButton } from "@/components/layout/BackButton";
+import { RecentlyVisitedTracker } from "@/components/anime/RecentlyVisitedTracker";
 import {
   getTitle,
   sanitizeDescription,
@@ -30,6 +32,13 @@ export function AnimeHero({ anime }: AnimeHeroProps) {
 
   return (
     <section className="relative">
+      {/* ✅ Track this visit for the Command Menu's "Recently Visited" section */}
+      <RecentlyVisitedTracker
+        id={anime.id}
+        title={title}
+        coverImage={cover}
+      />
+
       {/* Banner */}
       <div className="relative h-[40vh] md:h-[50vh] w-full overflow-hidden">
         <Image
@@ -42,6 +51,13 @@ export function AnimeHero({ anime }: AnimeHeroProps) {
         />
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-background/30" />
         <div className="absolute inset-0 bg-gradient-to-r from-background/70 via-transparent to-transparent" />
+      </div>
+
+      {/* ✅ Back button — positioned over the banner */}
+      <div className="absolute top-4 left-4 md:top-6 md:left-6 z-20">
+        <BackButton
+          className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 hover:bg-black/60"
+        />
       </div>
 
       {/* Content overlay */}
