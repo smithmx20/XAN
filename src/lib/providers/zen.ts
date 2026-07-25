@@ -2,6 +2,16 @@
 // ✅ Zen provider — fetches stream URLs from flixcloud.cc
 // ✅ Public API (no auth needed) — returns HLS player URL
 // ✅ We proxy through /api/stream-zen to avoid CORS
+//
+// NOTE: flixcloud.cc returns "dual" audio (both sub + dub in one player).
+// The player defaults to sub (default_audio_track:0). There is no URL
+// parameter to change the default audio track — the user must switch
+// audio inside the player's UI (speaker icon → audio track selector).
+// We label the source as "Dual Audio" so users know they can switch.
+//
+// When `mode === "dub"` is requested and the source is dual-audio, the
+// source name becomes "Zen (Dual→Dub)" to signal to the user that they
+// need to switch audio tracks inside the player to hear the dub.
 
 export interface ZenSource {
   url: string;
@@ -16,6 +26,7 @@ interface FlixcloudResponse {
   data?: Array<{
     player_url?: string;
     quality?: string;
+    audio?: string;
   }>;
   error?: string;
 }
@@ -24,11 +35,13 @@ interface FlixcloudResponse {
  * Fetch stream sources from Zen (flixcloud.cc)
  * @param anilistId - The AniList anime ID
  * @param episode - The episode number
- * @returns Array of sources (usually 1 iframe embed)
+ * @param mode - "sub" or "dub" (flixcloud returns dual-audio; mode is for labeling only)
+ * @returns Array of sources (usually 1-2 iframe embeds with dual audio)
  */
 export async function fetchZenSources(
   anilistId: number,
   episode: number,
+  mode: "sub" | "dub" = "sub",
 ): Promise<ZenSource[]> {
   try {
     // Use our proxy to avoid CORS issues (flixcloud.cc is behind Cloudflare)
@@ -44,11 +57,13 @@ export async function fetchZenSources(
     const sources: ZenSource[] = [];
     for (const item of json.data) {
       if (item.player_url) {
+        const isDual = item.audio === "dual";
         sources.push({
           url: item.player_url,
           type: "iframe",
-          quality: item.quality ?? null,
-          sourceName: "Zen",
+          quality: isDual ? "Dual Audio" : (item.quality ?? null),
+          sourceName:
+            mode === "dub" && isDual ? "Zen (Dual→Dub)" : "Zen",
           provider: "zen",
         });
       }

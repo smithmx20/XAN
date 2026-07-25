@@ -73,42 +73,106 @@ function streamResultToJSON(s: StreamResult) {
 }
 
 // ✅ Fetch Zen (flixcloud.cc) sources — server-side to bypass Cloudflare
+// Tries flixcloud.cc directly first; on 403 (Cloudflare browser challenge)
+// falls back to a Cloudflare-Worker-backed proxy (xancld.xyz by default,
+// override with NEXT_PUBLIC_ZEN_PROXY_URL). Without the proxy, Vercel / dev
+// server IPs get 403'd and Zen returns 0 sources.
+//
+// flixcloud.cc returns "dual" audio (both sub + dub in one player). When
+// `mode === "dub"` and the source is dual-audio, the source name becomes
+// "Zen (Dual→Dub)" to signal to the user that they need to switch audio
+// tracks inside the player to hear the dub.
+const ZEN_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0";
+const DEFAULT_ZEN_PROXY_URL = "https://xancld.xyz";
+
+function getZenProxyUrl(): string | null {
+  const fromEnv = process.env.NEXT_PUBLIC_ZEN_PROXY_URL;
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  return DEFAULT_ZEN_PROXY_URL;
+}
+
+type ZenSourceEntry = {
+  url: string;
+  type: "iframe";
+  quality: string | null;
+  sourceName: string;
+  provider: string;
+};
+
 async function fetchZenSourcesServerSide(
   anilistId: number,
   episode: number,
-): Promise<Array<{ url: string; type: "iframe"; quality: string | null; sourceName: string; provider: string }>> {
+  mode: "sub" | "dub" = "sub",
+): Promise<ZenSourceEntry[]> {
+  const sources: ZenSourceEntry[] = [];
+
+  // Helper to normalize the JSON response into ZenSourceEntry[].
+  const normalize = (json: unknown): ZenSourceEntry[] => {
+    const j = json as {
+      status?: string;
+      data?: Array<{ player_url?: string; quality?: string; audio?: string }>;
+    };
+    if (!j || j.status !== "success" || !Array.isArray(j.data)) return [];
+    const out: ZenSourceEntry[] = [];
+    for (const item of j.data) {
+      if (!item.player_url) continue;
+      const isDual = item.audio === "dual";
+      out.push({
+        url: item.player_url,
+        type: "iframe",
+        quality: isDual ? "Dual Audio" : (item.quality ?? null),
+        sourceName:
+          mode === "dub" && isDual ? "Zen (Dual→Dub)" : "Zen",
+        provider: "zen",
+      });
+    }
+    return out;
+  };
+
+  // ─── 1. Try flixcloud.cc directly ───
   try {
     const res = await fetch(
       `https://flixcloud.cc/videos/raw?anilist_id=${anilistId}&episode=${episode}`,
       {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
+          "User-Agent": ZEN_USER_AGENT,
           Accept: "application/json",
         },
         signal: AbortSignal.timeout(10_000),
       },
     );
-    if (!res.ok) return [];
-    const json = await res.json();
-    if (json.status !== "success" || !json.data) return [];
-
-    const sources: Array<{ url: string; type: "iframe"; quality: string | null; sourceName: string; provider: string }> = [];
-    for (const item of json.data) {
-      if (item.player_url) {
-        sources.push({
-          url: item.player_url,
-          type: "iframe",
-          quality: item.quality ?? null,
-          sourceName: "Zen",
-          provider: "zen",
-        });
-      }
+    if (res.ok) {
+      const json = await res.json();
+      sources.push(...normalize(json));
     }
-    return sources;
   } catch (err) {
-    console.warn("[stream] Zen fetch failed:", err);
-    return [];
+    console.warn("[stream] Zen direct fetch failed:", err);
   }
+
+  if (sources.length > 0) return sources;
+
+  // ─── 2. Fall back to proxy (Cloudflare Worker) ───
+  const proxyUrl = getZenProxyUrl();
+  if (proxyUrl) {
+    try {
+      const res = await fetch(
+        `${proxyUrl}/api/stream-zen?anilistId=${anilistId}&episode=${episode}`,
+        {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (res.ok) {
+        const json = await res.json();
+        sources.push(...normalize(json));
+      }
+    } catch (err) {
+      console.warn("[stream] Zen proxy fetch failed:", err);
+    }
+  }
+
+  return sources;
 }
 
 // ✅ Build Koto (megaplay.buzz) source — just a URL, no fetch needed
@@ -639,7 +703,7 @@ export async function GET(
 
   // ─── 2. Zen, Koto, Pahe, Gogoanime, Isekai2nd (in parallel, non-blocking) ───
   const [zenSources, paheSources, gogoSources, isekai2ndResult] = await Promise.all([
-    fetchZenSourcesServerSide(animeId, episode),
+    fetchZenSourcesServerSide(animeId, episode, requestedMode),
     fetchPaheSourcesServerSide(malId, episode, requestedMode),
     fetchGogoanimeSourcesServerSide(title, episode),
     fetchIsekai2ndSourcesServerSide(animeId, title, episode, requestedMode),

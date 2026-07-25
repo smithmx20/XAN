@@ -46,9 +46,9 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "zen",
     name: "Zen",
-    description: "FlixCloud embed — HLS player. 0 Vercel bandwidth (iframe). Good fallback when AllAnime sources fail.",
+    description: "FlixCloud embed — HLS player. 0 Vercel bandwidth (iframe). Returns dual-audio sources (sub + dub in one player); switch audio tracks inside the player. Good fallback when AllAnime sources fail. Falls back to a Cloudflare Worker proxy (xancld.xyz by default, override with NEXT_PUBLIC_ZEN_PROXY_URL) when flixcloud.cc 403s direct fetches.",
     supportsSub: true,
-    supportsDub: false,
+    supportsDub: true,
     defaultPriority: 80,
   },
   {
