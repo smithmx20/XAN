@@ -68,15 +68,26 @@ export default async function SchedulePage({ searchParams }: PageProps) {
     (now >= startDate && now < endDate);
   const isFutureWeek = startDate > now;
 
-  const [page1, page2] = await Promise.all([
-    fetchAiringSchedule(start, end, 1, 50).catch(() => null),
-    fetchAiringSchedule(start, end, 2, 50).catch(() => null),
-  ]);
-
-  const allSchedules: AiringSchedule[] = [
-    ...(page1?.data ?? []),
-    ...(page2?.data ?? []),
-  ];
+  // Paginate through ALL airing schedules for the week. AniList sorts by TIME
+  // ascending, and a typical anime week has 100–150 airing episodes — Sunday's
+  // airings land at the END of the time-sorted list, so capping at 1–2 pages
+  // silently truncates the last day(s) of the week. Keep fetching while
+  // hasNextPage is true, with a hard cap of 10 pages (500 eps) as a safety net.
+  const allSchedules: AiringSchedule[] = [];
+  let fetchFailed = false;
+  const MAX_PAGES = 10;
+  for (let p = 1; p <= MAX_PAGES; p++) {
+    const page = await fetchAiringSchedule(start, end, p, 50).catch(() => null);
+    if (!page) {
+      // If the very first page failed, treat as a hard fetch failure so the
+      // user sees the "Couldn't load schedule" state. Subsequent page failures
+      // are non-fatal — we just stop paginating and render what we have.
+      if (p === 1) fetchFailed = true;
+      break;
+    }
+    allSchedules.push(...(page.data ?? []));
+    if (!page.pageInfo.hasNextPage) break;
+  }
 
   const byDay: Record<number, AiringSchedule[]> = {
     0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [],
@@ -93,7 +104,6 @@ export default async function SchedulePage({ searchParams }: PageProps) {
   }
 
   const total = allSchedules.length;
-  const fetchFailed = !page1 && !page2;
   const tzLabel = Intl.DateTimeFormat().resolvedOptions().timeZone || "your local timezone";
 
   return (

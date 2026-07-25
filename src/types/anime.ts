@@ -182,6 +182,7 @@ export const AiringScheduleSchema = z.object({
       title: AnimeTitleSchema,
       coverImage: z
         .object({
+          extraLarge: z.string().nullable().default(null),
           large: z.string(),
           color: z.string().nullable().default(null),
         })
@@ -190,6 +191,7 @@ export const AiringScheduleSchema = z.object({
       episodes: z.number().nullable().default(null),
       format: z.string().nullable().default(null),
       status: z.string().nullable().default(null),
+      seasonYear: z.number().nullable().default(null),
       averageScore: z.number().nullable().default(null),
       genres: z.array(z.string()).default([]),
     })

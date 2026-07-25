@@ -104,10 +104,11 @@ export const AIRING_SCHEDULE_QUERY = `
         media {
           id
           title { romaji english native }
-          coverImage { large color }
+          coverImage { extraLarge large color }
           episodes
           format
           status
+          seasonYear
           averageScore
           genres
         }
