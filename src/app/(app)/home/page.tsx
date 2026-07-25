@@ -82,6 +82,9 @@ export default function HomePage() {
 
       {/* Page content */}
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-10 md:py-14 space-y-10 md:space-y-14">
+        {/* Continue Watching (compact, one card per anime) — at the top */}
+        <ContinueWatchingSmall />
+
         {/* Airing Today — new episodes dropping today */}
         <ErrorBoundary message="Couldn't load airing today">
           <Suspense fallback={<RowSkeleton width={36} />}>
@@ -89,27 +92,24 @@ export default function HomePage() {
           </Suspense>
         </ErrorBoundary>
 
-        {/* Trending Now — the hottest anime right now */}
-        <ErrorBoundary message="Couldn't load trending">
-          <Suspense fallback={<RowSkeleton width={40} />}>
-            <TrendingSection />
-          </Suspense>
-        </ErrorBoundary>
-
-        {/* Continue Watching (compact, one card per anime) */}
-        <ContinueWatchingSmall />
-
-        {/* Bookmarks (saved for later) */}
-        <BookmarksRow />
-
-        {/* Top 10 Today — Netflix-style ranked row */}
+        {/* Top 10 Today — Netflix-style ranked row (below Airing Today) */}
         <ErrorBoundary message="Couldn't load Top 10">
           <Suspense fallback={<TopTenSkeleton />}>
             <TopTenSection />
           </Suspense>
         </ErrorBoundary>
 
-        {/* Recommended For You — below Top 10 */}
+        {/* Trending Now — the hottest anime right now (below Top 10) */}
+        <ErrorBoundary message="Couldn't load trending">
+          <Suspense fallback={<RowSkeleton width={40} />}>
+            <TrendingSection />
+          </Suspense>
+        </ErrorBoundary>
+
+        {/* Bookmarks (saved for later) */}
+        <BookmarksRow />
+
+        {/* Recommended For You */}
         <ErrorBoundary message="Couldn't load recommendations">
           <RecommendationsRow />
         </ErrorBoundary>
