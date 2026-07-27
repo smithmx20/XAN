@@ -45,10 +45,18 @@ jobs:
           node-version: "22"
 
       - name: Install Puppeteer
-        run: npm install puppeteer
+        run: |
+          # Install Puppeteer in an isolated directory to avoid conflicts
+          # with XAN's existing dependencies (which have peer dep conflicts)
+          mkdir -p /tmp/puppeteer-setup
+          cd /tmp/puppeteer-setup
+          npm init -y
+          npm install puppeteer
 
       - name: Discover MASK/BUILD_ID via headless browser
         id: discover
+        env:
+          NODE_PATH: /tmp/puppeteer-setup/node_modules
         run: |
           set -euo pipefail
           node <<'DISCOVERY_SCRIPT' > /tmp/discovery-result.json
