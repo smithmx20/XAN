@@ -200,31 +200,103 @@ async function buildAaReq(queryHash, epoch, aesKey, buildId) {
 }
 
 // Fetch __aaCrypto from mkissa.to's episode page HTML
+// FALLBACK: If the HTML doesn't contain __aaCrypto (mkissa.to moved it to a
+// bootstrap API endpoint in July 2026), use Browser Rendering to load the
+// page and intercept the bootstrap network response.
 async function fetchAaCrypto(showId, episodeString, translationType) {
-  const url = MKISSA_EPISODE_URL(showId, episodeString, translationType);
-  console.log(`[worker] fetching __aaCrypto from ${url}`);
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
+  // ─── Step 1: Try the direct HTML scrape (fast, no browser) ───
+  try {
+    const url = MKISSA_EPISODE_URL(showId, episodeString, translationType);
+    console.log(`[worker] fetching __aaCrypto from ${url}`);
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": MKISSA_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const match = html.match(/window\.__aaCrypto\s*=\s*(\{[^}]+\})/);
+      if (match) {
+        const aaCrypto = JSON.parse(match[1]);
+        if (aaCrypto.partB && aaCrypto.epoch) {
+          console.log(`[worker] __aaCrypto from HTML: epoch=${aaCrypto.epoch}, partB length=${aaCrypto.partB.length}`);
+          return aaCrypto;
+        }
+      }
+      console.warn("[worker] __aaCrypto not found in HTML, falling back to Browser Rendering");
+    }
+  } catch (err) {
+    console.warn(`[worker] HTML scrape failed: ${err.message}, falling back to Browser Rendering`);
+  }
+
+  // ─── Step 2: Fall back to Browser Rendering ───
+  // mkissa.to moved __aaCrypto behind a bootstrap API endpoint that requires
+  // an x-aa-boot header computed by obfuscated client-side JS. We can't
+  // compute x-aa-boot server-side, so we use Browser Rendering to load the
+  // page and intercept the bootstrap network response.
+  //
+  // This requires the BROWSER binding in wrangler.toml:
+  //   [browser]
+  //   binding = "BROWSER"
+  //
+  // Free tier: 10 min/day browser CPU. Each bootstrap takes ~5-10s.
+  // __aaCrypto is cached for ~3 days (epochMs), so we only need to bootstrap
+  // once per epoch — well within the free tier.
+  if (typeof BROWSER !== "undefined") {
+    return await fetchAaCryptoViaBrowser(showId, episodeString, translationType);
+  }
+
+  throw new Error("__aaCrypto not found in HTML and Browser Rendering not configured. Add the BROWSER binding to wrangler.toml.");
+}
+
+// Fetch __aaCrypto via Cloudflare Browser Rendering (Puppeteer)
+async function fetchAaCryptoViaBrowser(showId, episodeString, translationType) {
+  const puppeteer = require("@cloudflare/puppeteer");
+  console.log("[worker] launching browser for __aaCrypto bootstrap");
+
+  const browser = await puppeteer.launch(env.BROWSER);
+  const page = await browser.newPage();
+
+  // Set up response interceptor to capture the bootstrap response
+  let bootstrapData = null;
+  page.on("response", async (response) => {
+    const url = response.url();
+    if (url.includes("client-crypto/v1/bootstrap") && response.ok()) {
+      try {
+        const json = await response.json();
+        if (json.partB && json.epoch) {
+          bootstrapData = json;
+          console.log(`[worker] intercepted bootstrap response: epoch=${json.epoch}, partB length=${json.partB.length}`);
+        }
+      } catch (e) {
+        // response.json() can fail if the response is not JSON
+      }
+    }
   });
-  if (!res.ok) {
-    throw new Error(`mkissa.to returned HTTP ${res.status}`);
+
+  try {
+    // Navigate to the episode page — the SPA will automatically make the
+    // bootstrap request, which we intercept above.
+    const url = `https://mkissa.to/anime/${showId}/p-${episodeString}-${translationType}`;
+    console.log(`[worker] navigating to ${url}`);
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+
+    // Wait for the bootstrap response (the SPA makes it on page load)
+    for (let i = 0; i < 30 && !bootstrapData; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    if (!bootstrapData) {
+      throw new Error("bootstrap response not intercepted within 30s");
+    }
+
+    console.log(`[worker] __aaCrypto from browser: epoch=${bootstrapData.epoch}, partB length=${bootstrapData.partB.length}`);
+    return { epoch: String(bootstrapData.epoch), partB: bootstrapData.partB };
+  } finally {
+    await browser.close();
   }
-  const html = await res.text();
-  // Extract window.__aaCrypto={...}
-  const match = html.match(/window\.__aaCrypto\s*=\s*(\{[^}]+\})/);
-  if (!match) {
-    throw new Error("__aaCrypto not found in mkissa.to page HTML");
-  }
-  const aaCrypto = JSON.parse(match[1]);
-  if (!aaCrypto.partB || !aaCrypto.epoch) {
-    throw new Error(`__aaCrypto missing required fields: ${JSON.stringify(aaCrypto)}`);
-  }
-  console.log(`[worker] __aaCrypto: epoch=${aaCrypto.epoch}, partB length=${aaCrypto.partB.length}`);
-  return aaCrypto;
 }
 
 // Compute the query hash (SHA-256 of the query string)

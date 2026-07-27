@@ -5,24 +5,41 @@ name = "xan-stream-proxy"
 main = "worker.js"
 compatibility_date = "2024-12-01"
 
-# v5: No browser binding needed! The Worker implements AllAnime's crypto
-# scheme directly using Web Crypto API. Faster, simpler, no browser CPU limits.
+# v6: Browser Rendering fallback for __aaCrypto bootstrap.
 #
-# v4 used Browser Rendering which:
-#   - Was slow (20-40s per request — Chrome cold-start)
-#   - Hit Cloudflare's "Just a moment..." challenge on allmanga.to
-#   - Was limited to 10 min browser CPU/day on free tier
+# mkissa.to moved __aaCrypto from the episode page HTML to a bootstrap API
+# endpoint (api.mkissa.net/client-crypto/v1/bootstrap) that requires an
+# x-aa-boot header computed by obfuscated client-side JS. We can't compute
+# x-aa-boot server-side, so we use Browser Rendering as a fallback:
 #
-# v5 fetches __aaCrypto from mkissa.to (which has no Cloudflare challenge),
-# derives the AES key, signs the GraphQL request, and decrypts the response —
-# all in pure Web Crypto. ~1-2s per request, no browser needed.
+#   1. Try the direct HTML scrape (fast, no browser) — works if mkissa.to
+#      ever reverts to embedding __aaCrypto in HTML
+#   2. Fall back to Browser Rendering — load the episode page in a managed
+#      Chrome browser, intercept the bootstrap network response, extract
+#      __aaCrypto. The browser handles the x-aa-boot computation automatically.
+#
+# Free tier: 10 min/day browser CPU. Each bootstrap takes ~5-10s.
+# __aaCrypto is cached for ~3 days (epochMs), so we only need to bootstrap
+# once per epoch — well within the free tier (~6-8 bootstraps/day max).
+#
+# The BROWSER binding is REQUIRED for the fallback to work.
+# If you don't want to use Browser Rendering, the direct-crypto approach
+# (HTML scrape) will still be attempted first — it just won't succeed until
+# mkissa.to reverts or a server-side x-aa-boot computation is found.
+
+# ─── Browser Rendering binding ───────────────────────────────────────────
+# This enables Cloudflare's managed Chrome browser for the __aaCrypto
+# bootstrap fallback. Free tier: 10 min/day browser CPU.
+[browser]
+binding = "BROWSER"
+
+# ─── Dependencies ────────────────────────────────────────────────────────
+# @cloudflare/puppeteer is needed for Browser Rendering.
+# Install it in the cf-worker directory before deploying:
+#   cd cf-worker && npm install @cloudflare/puppeteer
 
 # Workers don't need a "routes" section — they automatically get a URL at:
 #   https://xan-stream-proxy.<your-account-subdomain>.workers.dev
 #
 # After deploying, copy that URL and set it as NEXT_PUBLIC_CF_WORKER_URL
 # in your Vercel project's environment variables.
-
-# ─── No secrets required! ────────────────────────────────────────────────
-# No SOLVER_API_KEY, no browser binding, no external service.
-# Just `wrangler deploy` and you're done.

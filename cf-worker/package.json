@@ -1,13 +1,16 @@
 {
   "name": "xan-stream-proxy",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "private": true,
-  "description": "XAN Cloudflare Worker — stream proxy + AllAnime episode resolver using direct crypto (no browser needed, free, no card, no external service)",
+  "description": "XAN Cloudflare Worker — stream proxy + AllAnime episode resolver with direct crypto + Browser Rendering fallback for __aaCrypto bootstrap",
   "main": "worker.js",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@cloudflare/puppeteer": "^0.0.14"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
