@@ -31,23 +31,28 @@ import { createHash, createDecipheriv } from "crypto";
 import { z } from "zod";
 import { getStoredCookie } from "./cf-cookie-store";
 
-const ALLANIME_GRAPHQL = "https://api.allanime.day/api/graphql";
-const ALLANIME_API = "https://api.allanime.day/api";
-const ALLANIME_BASE = "https://allanime.day";
+// AllAnime has migrated from allanime.day → mkissa.to (mid-2026). The API
+// endpoint moved from api.allanime.day/api to api.mkissa.net/api, and the
+// episode query hash was rotated. The old endpoint still works for now
+// (returns AA_CRYPTO_MISSING without a signed aaReq), but the new endpoint
+// is what mkissa.to's SPA actually uses.
+const ALLANIME_GRAPHQL = "https://api.mkissa.net/api/graphql";
+const ALLANIME_API = "https://api.mkissa.net/api";
+const ALLANIME_BASE = "https://mkissa.to";
 const EPISODE_QUERY_HASH =
-  "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
+  "f4662f4b7510b26795dd53ef824a0bf1740fbbc5d1273fab18222ac831bca8d0";
 
 const AES_KEY_PASSPHRASE = "Xot36i3lK3:v1";
 const AES_KEY = createHash("sha256").update(AES_KEY_PASSPHRASE).digest();
 
-const REFERER = "https://youtu-chan.com";
-const ORIGIN = "https://youtu-chan.com";
+const REFERER = "https://mkissa.to/";
+const ORIGIN = "https://mkissa.to";
 const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 const REQUEST_TIMEOUT_MS = 12000;
 const CLOCK_TIMEOUT_MS = 20000;
-const LEGACY_EPISODES_ENDPOINT = "https://api.allanime.day/episodes";
+const LEGACY_EPISODES_ENDPOINT = "https://api.mkissa.net/episodes";
 
 export const AllAnimeShowSchema = z.object({
   _id: z.string(),
@@ -141,6 +146,7 @@ async function gql<T>(
         "User-Agent": USER_AGENT,
         Referer: REFERER,
         Origin: ORIGIN,
+        "x-build-id": "72",
       },
       body: JSON.stringify({ query, variables }),
       next: { revalidate: 3600 },
@@ -307,6 +313,9 @@ export async function getEpisodeSources(
               "User-Agent": USER_AGENT,
               Referer: REFERER,
               Origin: ORIGIN,
+              // mkissa.to's SPA sends x-build-id: 72 on all API requests.
+              // The server uses this to select the correct crypto lane.
+              "x-build-id": "72",
             },
         // ✅ NO next: { revalidate } — that was caching broken/empty responses
         // from when the Worker was v4 (Browser Rendering, failing). The Worker
