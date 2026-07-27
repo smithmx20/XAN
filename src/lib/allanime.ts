@@ -352,81 +352,132 @@ export async function getEpisodeSources(
       console.warn("[AllAnime] episode query errors:", errMsg, errCode);
 
       // ─── Step 3: AA_CRYPTO_MISSING fallback ───
-      // As of mid-2026, AllAnime's episode query requires a Turnstile captcha
-      // token. Without one, the server returns AA_CRYPTO_MISSING. We try the
-      // free solver (or CF Worker if it's v3 with /allanime/episode endpoint)
-      // to solve the captcha and return the decrypted sourceUrls.
+      // As of mid-2026, AllAnime's episode query requires a signed aaReq
+      // extension (mkissa.to AES-GCM crypto scheme). Without it, the server
+      // returns AA_CRYPTO_MISSING. We have THREE resolver paths, tried in order:
       //
       // Solver URL precedence:
-      //   1. NEXT_PUBLIC_FREE_SOLVER_URL (free — Puppeteer on a VPS/local)
-      //   2. NEXT_PUBLIC_CF_WORKER_URL   (only if v3 — has /allanime/episode endpoint;
+      //   1. Internal /api/allanime/episode (built-in mkissa.to crypto resolver —
+      //      no env vars needed. Always tried first.)
+      //   2. NEXT_PUBLIC_FREE_SOLVER_URL (free — Puppeteer on a VPS/local)
+      //   3. NEXT_PUBLIC_CF_WORKER_URL   (only if v3 — has /allanime/episode endpoint;
       //                                   v2 Workers will 404 and we skip gracefully)
       const FREE_SOLVER_URL = process.env.NEXT_PUBLIC_FREE_SOLVER_URL ?? "";
-      const solverUrl = FREE_SOLVER_URL || CF_WORKER_URL;
 
-      if (errCode === "AA_CRYPTO_MISSING" && solverUrl) {
-        const solverType = FREE_SOLVER_URL ? "free-solver" : "cf-worker";
+      // ─── 3a. Try the built-in mkissa.to crypto resolver first ───
+      // This route (src/app/api/allanime/episode/route.ts) implements the full
+      // AES-GCM crypto scheme server-side using src/lib/allanime-crypto.ts.
+      // It's ported from https://github.com/smithP2007/XANCLD's worker.
+      if (errCode === "AA_CRYPTO_MISSING" || errCode.startsWith("AA_CRYPTO")) {
         console.warn(
-          `[AllAnime] AA_CRYPTO_MISSING — falling back to ${solverType} episode resolver...`,
+          `[AllAnime] ${errCode} — falling back to built-in mkissa.to crypto resolver (/api/allanime/episode)...`,
         );
-        // ✅ Strip trailing slash to avoid double-slash bug (//allanime/episode)
-        const baseUrl = solverUrl.replace(/\/+$/, "");
-        const epEndpoint = `${baseUrl}/allanime/episode?` +
+        const epEndpoint =
+          `/api/allanime/episode?` +
           new URLSearchParams({
             showId,
             episodeString: episodeStr,
             translationType: mode,
           }).toString();
 
-        console.log(`[AllAnime] calling ${solverType}: ${epEndpoint}`);
-        // 60s timeout — v5 Worker uses direct crypto (1-2s), no browser.
-        const solverRes = await tryEpisodeFetch(epEndpoint, 60_000);
-        
-        if (solverRes) {
-          console.log(`[AllAnime] ${solverType} HTTP ${solverRes.status}`);
+        const internalRes = await tryEpisodeFetch(epEndpoint, 30_000);
+        if (internalRes) {
+          console.log(`[AllAnime] internal crypto resolver HTTP ${internalRes.status}`);
         }
-        
-        if (solverRes && solverRes.ok) {
-          const responseText = await solverRes.text();
-          console.log(`[AllAnime] ${solverType} response length: ${responseText.length}`);
-          console.log(`[AllAnime] ${solverType} response preview: ${responseText.slice(0, 300)}`);
-          
-          let solverJson: { sources?: unknown[]; error?: string };
+        if (internalRes && internalRes.ok) {
+          let internalJson: { sources?: unknown[]; error?: string };
           try {
-            solverJson = JSON.parse(responseText);
+            internalJson = JSON.parse(await internalRes.text());
           } catch (parseErr) {
-            console.warn(`[AllAnime] ${solverType} response not JSON:`, parseErr);
-            return null;
+            console.warn(`[AllAnime] internal crypto resolver response not JSON:`, parseErr);
+            internalJson = {};
           }
-          
           if (
-            solverJson.sources &&
-            Array.isArray(solverJson.sources) &&
-            solverJson.sources.length > 0
+            internalJson.sources &&
+            Array.isArray(internalJson.sources) &&
+            internalJson.sources.length > 0
           ) {
             console.log(
-              `[AllAnime] ${solverType} episode resolver returned ${solverJson.sources.length} sources`,
+              `[AllAnime] internal crypto resolver returned ${internalJson.sources.length} sources`,
             );
-            return solverJson.sources as SourceUrl[];
+            return internalJson.sources as SourceUrl[];
           }
           console.warn(
-            `[AllAnime] ${solverType} episode resolver returned no sources:`,
-            solverJson.error ?? JSON.stringify(solverJson).slice(0, 300),
+            `[AllAnime] internal crypto resolver returned no sources:`,
+            internalJson.error ?? "no error message",
           );
-        } else {
-          // 404 means the CF Worker is v2 (no /allanime/episode endpoint) —
-          // user needs to deploy the free solver. Log clearly.
-          const status = solverRes?.status ?? "null";
-          if (status === 404 && !FREE_SOLVER_URL) {
+        }
+
+        // ─── 3b. Fall back to external solver (CF Worker or free-solver) ───
+        const solverUrl = FREE_SOLVER_URL || CF_WORKER_URL;
+        if (solverUrl) {
+          const solverType = FREE_SOLVER_URL ? "free-solver" : "cf-worker";
+          console.warn(
+            `[AllAnime] internal resolver failed — falling back to ${solverType}...`,
+          );
+          // ✅ Strip trailing slash to avoid double-slash bug (//allanime/episode)
+          const baseUrl = solverUrl.replace(/\/+$/, "");
+          const epEndpoint = `${baseUrl}/allanime/episode?` +
+            new URLSearchParams({
+              showId,
+              episodeString: episodeStr,
+              translationType: mode,
+            }).toString();
+
+          console.log(`[AllAnime] calling ${solverType}: ${epEndpoint}`);
+          // 60s timeout — v5 Worker uses direct crypto (1-2s), no browser.
+          const solverRes = await tryEpisodeFetch(epEndpoint, 60_000);
+
+          if (solverRes) {
+            console.log(`[AllAnime] ${solverType} HTTP ${solverRes.status}`);
+          }
+
+          if (solverRes && solverRes.ok) {
+            const responseText = await solverRes.text();
+            console.log(`[AllAnime] ${solverType} response length: ${responseText.length}`);
+            console.log(`[AllAnime] ${solverType} response preview: ${responseText.slice(0, 300)}`);
+
+            let solverJson: { sources?: unknown[]; error?: string };
+            try {
+              solverJson = JSON.parse(responseText);
+            } catch (parseErr) {
+              console.warn(`[AllAnime] ${solverType} response not JSON:`, parseErr);
+              return null;
+            }
+
+            if (
+              solverJson.sources &&
+              Array.isArray(solverJson.sources) &&
+              solverJson.sources.length > 0
+            ) {
+              console.log(
+                `[AllAnime] ${solverType} episode resolver returned ${solverJson.sources.length} sources`,
+              );
+              return solverJson.sources as SourceUrl[];
+            }
             console.warn(
-              `[AllAnime] CF Worker returned 404 for /allanime/episode — you have a v2 Worker (stream-proxy only). ` +
-                `Deploy the free solver (free-solver/README.md) and set NEXT_PUBLIC_FREE_SOLVER_URL in Vercel.`,
+              `[AllAnime] ${solverType} episode resolver returned no sources:`,
+              solverJson.error ?? JSON.stringify(solverJson).slice(0, 300),
             );
           } else {
-            console.warn(
-              `[AllAnime] ${solverType} episode resolver HTTP ${status}`,
-            );
+            // 404 means the CF Worker is v2 (no /allanime/episode endpoint) —
+            // user needs to deploy the free solver. Log clearly.
+            const status = solverRes?.status ?? "null";
+            if (status === 404 && !FREE_SOLVER_URL) {
+              console.warn(
+                `[AllAnime] CF Worker returned 404 for /allanime/episode — you have a v2 Worker (stream-proxy only). ` +
+                  `Deploy the free solver (free-solver/README.md) and set NEXT_PUBLIC_FREE_SOLVER_URL in Vercel.`,
+              );
+            } else {
+              console.warn(
+                `[AllAnime] ${solverType} episode resolver HTTP ${status}`,
+              );
+            }
           }
+        } else {
+          console.warn(
+            `[AllAnime] No external solver configured (NEXT_PUBLIC_FREE_SOLVER_URL / NEXT_PUBLIC_CF_WORKER_URL) — giving up.`,
+          );
         }
       }
 
