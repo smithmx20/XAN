@@ -353,21 +353,52 @@ export async function getEpisodeSources(
 
       // ─── Step 3: AA_CRYPTO_MISSING fallback ───
       // As of mid-2026, AllAnime's episode query requires a Turnstile captcha
-      // token. Without one, the server returns AA_CRYPTO_MISSING. We try the
-      // free solver (or CF Worker if it's v3 with /allanime/episode endpoint)
-      // to solve the captcha and return the decrypted sourceUrls.
+      // token. Without one, the server returns AA_CRYPTO_MISSING. We try an
+      // external solver that has the /allanime/episode endpoint (implements
+      // the mkissa.to AES-GCM crypto scheme server-side).
       //
       // Solver URL precedence:
       //   1. NEXT_PUBLIC_FREE_SOLVER_URL (free — Puppeteer on a VPS/local)
       //   2. NEXT_PUBLIC_CF_WORKER_URL   (only if v3 — has /allanime/episode endpoint;
       //                                   v2 Workers will 404 and we skip gracefully)
+      //   3. https://xancld.xyz          (public XANCLD worker deployment — default
+      //                                   fallback so users don't need to deploy
+      //                                   their own worker just to attempt AllAnime.
+      //                                   Same upstream mkissa.to limitations apply:
+      //                                   if mkissa.to is blocking server-side
+      //                                   fetches, this will also fail. Override
+      //                                   with NEXT_PUBLIC_FREE_SOLVER_URL or
+      //                                   NEXT_PUBLIC_CF_WORKER_URL if you have
+      //                                   your own worker.)
       const FREE_SOLVER_URL = process.env.NEXT_PUBLIC_FREE_SOLVER_URL ?? "";
-      const solverUrl = FREE_SOLVER_URL || CF_WORKER_URL;
+      // XANCLD's worker serves its endpoints under /api/* (e.g. /api/allanime/episode).
+      // XAN's own cf-worker serves them at the root (e.g. /allanime/episode).
+      // Since the code below appends `/allanime/episode` to baseUrl, the default
+      // needs to include the `/api` suffix so the final URL is
+      // https://xancld.xyz/api/allanime/episode.
+      const DEFAULT_SOLVER_URL = "https://xancld.xyz/api";
+      const solverUrl = FREE_SOLVER_URL || CF_WORKER_URL || DEFAULT_SOLVER_URL;
+      const solverType = FREE_SOLVER_URL
+        ? "free-solver"
+        : CF_WORKER_URL
+          ? "cf-worker"
+          : "xancld-default";
 
-      if (errCode === "AA_CRYPTO_MISSING" && solverUrl) {
-        const solverType = FREE_SOLVER_URL ? "free-solver" : "cf-worker";
+      // Trigger the solver fallback on ANY error from the legacy persisted-query
+      // path. AllAnime has rotated/migrated this endpoint multiple times in 2026
+      // (PERSISTED_QUERY_NOT_FOUND when the hash is retired, AA_CRYPTO_MISSING
+      // when the hash is still known but the request lacks a signed aaReq,
+      // AA_CRYPTO_STALE when the signed proof uses a stale MASK). In all three
+      // cases the right move is to delegate to an external solver that speaks
+      // the current mkissa.to crypto scheme.
+      const shouldFallbackToSolver =
+        errCode === "AA_CRYPTO_MISSING" ||
+        errCode === "PERSISTED_QUERY_NOT_FOUND" ||
+        errCode.startsWith("AA_CRYPTO");
+
+      if (shouldFallbackToSolver && solverUrl) {
         console.warn(
-          `[AllAnime] AA_CRYPTO_MISSING — falling back to ${solverType} episode resolver...`,
+          `[AllAnime] ${errCode} — falling back to ${solverType} episode resolver...`,
         );
         // ✅ Strip trailing slash to avoid double-slash bug (//allanime/episode)
         const baseUrl = solverUrl.replace(/\/+$/, "");
