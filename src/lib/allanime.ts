@@ -146,7 +146,7 @@ async function gql<T>(
         "User-Agent": USER_AGENT,
         Referer: REFERER,
         Origin: ORIGIN,
-        "x-build-id": "72",
+        "x-build-id": process.env.MKISSA_BUILD_ID || "72",
       },
       body: JSON.stringify({ query, variables }),
       next: { revalidate: 3600 },
@@ -313,9 +313,13 @@ export async function getEpisodeSources(
               "User-Agent": USER_AGENT,
               Referer: REFERER,
               Origin: ORIGIN,
-              // mkissa.to's SPA sends x-build-id: 72 on all API requests.
+              // mkissa.to's SPA sends x-build-id on all API requests.
               // The server uses this to select the correct crypto lane.
-              "x-build-id": "72",
+              // NOTE: BUILD_ID rotates every ~6 hours. The GitHub Action
+              // (refresh-mkissa-mask.yml) keeps cf-worker/worker.js's
+              // FALLBACK_BUILD_ID fresh. We read it from the same env var
+              // the cf-worker uses, or default to the last known value.
+              "x-build-id": process.env.MKISSA_BUILD_ID || "72",
             },
         // ✅ NO next: { revalidate } — that was caching broken/empty responses
         // from when the Worker was v4 (Browser Rendering, failing). The Worker

@@ -12,9 +12,9 @@
 # This cron keeps the hardcoded FALLBACK values fresh so the Worker usually
 # doesn't need to self-heal (faster first request after rotation).
 #
-# Schedule: every 6 hours. The MASK only changes every few days/weeks, so this
-# is more than frequent enough to catch a rotation within ~6h.
-# Manual trigger: Actions tab → "Refresh mkissa.to MASK" → "Run workflow".
+# Schedule: every 6 hours. The MASK and BUILD_ID rotate every ~6 hours, so
+# this catches a rotation within ~6h. Manual trigger: Actions tab → "Refresh
+# mkissa.to MASK" → "Run workflow".
 
 name: Refresh mkissa.to MASK
 
@@ -31,15 +31,12 @@ jobs:
   refresh:
     name: Check & refresh MASK/BUILD_ID
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Use a deploy key or the default GITHUB_TOKEN — both work for pushing
-          # back to the same repo. We use the default token with `permissions:
-          # contents: write` above.
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
@@ -47,146 +44,177 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Fetch mkissa.to and discover MASK/BUILD_ID
+      - name: Install Puppeteer
+        run: npm install puppeteer
+
+      - name: Discover MASK/BUILD_ID via headless browser
         id: discover
-        working-directory: cf-worker
         run: |
           set -euo pipefail
           node <<'DISCOVERY_SCRIPT' > /tmp/discovery-result.json
-          // Crawl mkissa.to's SvelteKit bundle to find the current MASK and BUILD_ID.
-          // Mirrors the Worker's discoverMaskFromMkissa() + extractMaskAndBuildId().
+          // Discover the current MASK and BUILD_ID from mkissa.to's running SPA
+          // using a headless browser (Puppeteer).
           //
-          // Robust strategy (handles all observed pattern shapes):
-          //   1. Find the ONLY 64-hex string literal in the chunk → that's the MASK
-          //   2. Find buildId:<var> or x-build-id":<var> → that var holds the BUILD_ID
-          //   3. Look up that var's assignment: either <var>="<N>" or
-          //      <var>=_t(N)!=="string"?"<N>":""  → extract the number
-          const MKISSA_ORIGIN = "https://mkissa.to/";
-          const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+          // This approach is immune to MASK obfuscation changes in mkissa.to's JS
+          // bundle because it extracts the values from the SPA's runtime state,
+          // not from the JS source code.
+          //
+          // Strategy:
+          //   1. Launch headless Chrome, navigate to mkissa.to
+          //   2. Intercept crypto.subtle.importKey to capture the derived AES key (32 bytes)
+          //   3. Intercept the bootstrap fetch to capture __aaCrypto ({epoch, partB})
+          //   4. Compute MASK = AES_key XOR base64_decode(partB)
+          //   5. Extract BUILD_ID from the bootstrap URL's buildId query parameter
 
-          const HEX_64_PATTERN = /"([0-9a-fA-F]{64})"/;
-          const BUILD_ID_REF_PATTERN = /(?:buildId|x-build-id")\s*:\s*([A-Za-z_$][\w$]*)/g;
-          function makeBuildIdDirectPattern(varName) {
-            const v = varName.replace(/\$/g, "\\$");
-            return new RegExp("(?:const|var|let|,)\\s*" + v + '\\s*=\\s*"(\\d{1,3})"');
-          }
-          function makeBuildIdWrappedPattern(varName) {
-            const v = varName.replace(/\$/g, "\\$");
-            return new RegExp(v + '\\s*=\\s*[A-Za-z_$][\\w$]*\\(\\s*\\d+\\s*\\)\\s*!==\\s*"string"\\s*\\?\\s*"(\\d{1,3})"');
-          }
-
-          function extractMaskAndBuildId(src) {
-            const hexMatch = src.match(HEX_64_PATTERN);
-            if (!hexMatch) return null;
-            const mask = hexMatch[1];
-            const buildIdRefs = [...src.matchAll(BUILD_ID_REF_PATTERN)];
-            if (buildIdRefs.length === 0) return { mask, buildId: null };
-            const candidates = [];
-            const seenVars = new Set();
-            for (const ref of buildIdRefs) {
-              const varName = ref[1];
-              if (seenVars.has(varName)) continue;
-              seenVars.add(varName);
-              const directPat = makeBuildIdDirectPattern(varName);
-              const directMatch = src.match(directPat);
-              if (directMatch) { candidates.push(directMatch[1]); continue; }
-              const wrappedPat = makeBuildIdWrappedPattern(varName);
-              const wrappedMatch = src.match(wrappedPat);
-              if (wrappedMatch) candidates.push(wrappedMatch[1]);
-            }
-            if (candidates.length === 0) return { mask, buildId: null };
-            const counts = {};
-            for (const c of candidates) counts[c] = (counts[c] || 0) + 1;
-            const buildId = candidates.sort((a, b) => counts[b] - counts[a])[0];
-            return { mask, buildId };
-          }
-
-          function resolveChunkUrl(rel, baseUrl) {
-            if (rel.startsWith("http://") || rel.startsWith("https://")) return rel;
-            const clean = rel.split("?")[0].split("#")[0];
-            let baseDir = baseUrl.slice(0, baseUrl.lastIndexOf("/"));
-            let r = clean;
-            while (r.startsWith("../")) {
-              baseDir = baseDir.slice(0, baseDir.lastIndexOf("/"));
-              r = r.slice(3);
-            }
-            if (r.startsWith("./")) r = r.slice(2);
-            return `${baseDir}/${r}`;
-          }
+          const puppeteer = require("puppeteer");
 
           async function main() {
-            // 1. Fetch landing page
-            const htmlRes = await fetch(MKISSA_ORIGIN, {
-              headers: { "User-Agent": UA, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+            const browser = await puppeteer.launch({
+              headless: "new",
+              args: ["--no-sandbox", "--disable-setuid-sandbox"],
             });
-            if (!htmlRes.ok) throw new Error(`mkissa.to HTTP ${htmlRes.status}`);
-            const html = await htmlRes.text();
+            const page = await browser.newPage();
+            await page.setUserAgent(
+              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            );
 
-            // 2. Extract entry chunk URLs
-            const entryUrls = [...html.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)]
-              .map(m => m[1])
-              .filter(u => u.includes("/_app/immutable/entry/"));
-            if (entryUrls.length === 0) throw new Error("no entry chunk URLs in mkissa.to HTML");
+            const captured = {
+              importedKeys: [],
+              bootstrapUrl: null,
+              bootstrapResponse: null,
+            };
 
-            // 3. BFS crawl — fetch chunks at increasing depths, searching each for
-            // the MASK pattern and collecting new chunk URLs to crawl next.
-            // The MASK chunk is NOT always directly imported by the entry chunks —
-            // it can be nested 2+ levels deep (e.g. entry → chunkA → chunkB(=MASK)).
-            // We crawl breadth-first and short-circuit the moment we find a hit.
-            const MAX_CHUNKS_TO_CRAWL = 40;
-            const visited = new Set();
-            const queue = [...entryUrls];
-            let crawlCount = 0;
-
-            while (queue.length > 0 && crawlCount < MAX_CHUNKS_TO_CRAWL) {
-              const batch = queue.splice(0, Math.min(queue.length, 10));
-              const batchResults = await Promise.all(batch.map(async (url) => {
-                if (visited.has(url)) return { found: null, newUrls: [] };
-                visited.add(url);
-                crawlCount++;
+            // Intercept crypto.subtle.importKey to capture 32-byte AES keys
+            await page.evaluateOnNewDocument(() => {
+              window.__importedKeys = [];
+              const origImportKey = crypto.subtle.importKey.bind(crypto.subtle);
+              crypto.subtle.importKey = function (format, keyData, algorithm, extractable, keyUsages) {
                 try {
-                  const res = await fetch(url, { headers: { "User-Agent": UA, "Accept": "*/*" } });
-                  if (!res.ok) return { found: null, newUrls: [] };
-                  const src = await res.text();
-                  const extracted = extractMaskAndBuildId(src);
-                  if (extracted && extracted.buildId) {
-                    return {
-                      found: { mask: extracted.mask, buildId: extracted.buildId, chunk: url.split("/").pop() },
-                      newUrls: [],
-                    };
+                  if (keyData instanceof ArrayBuffer || keyData instanceof Uint8Array) {
+                    const bytes = new Uint8Array(keyData);
+                    if (bytes.length === 32) {
+                      let hex = "";
+                      for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
+                      window.__importedKeys.push({
+                        hex,
+                        algorithm: JSON.stringify(algorithm),
+                        usages: JSON.stringify(keyUsages),
+                      });
+                    }
                   }
-                  const newUrls = [];
-                  for (const m of src.matchAll(/import\(\s*"([^"]+\.js)"\s*\)/g)) {
-                    const abs = resolveChunkUrl(m[1], url);
-                    if (abs.includes("/_app/immutable/chunks/") && !visited.has(abs)) newUrls.push(abs);
-                  }
-                  for (const m of src.matchAll(/from\s*"([^"]+\.js)"/g)) {
-                    const abs = resolveChunkUrl(m[1], url);
-                    if (abs.includes("/_app/immutable/chunks/") && !visited.has(abs)) newUrls.push(abs);
-                  }
-                  return { found: null, newUrls };
-                } catch { return { found: null, newUrls: [] }; }
-              }));
+                } catch (e) {}
+                return origImportKey(format, keyData, algorithm, extractable, keyUsages);
+              };
 
-              const found = batchResults.find(r => r.found !== null);
-              if (found) {
-                console.log(`✓ MASK=${found.found.mask.slice(0,16)}... BUILD_ID=${found.found.buildId} (from ${found.found.chunk}, crawled ${crawlCount} chunks)`);
-                console.log(JSON.stringify({ mask: found.found.mask, buildId: found.found.buildId, chunk: found.found.chunk }));
-                return;
-              }
+              // Intercept fetch to capture bootstrap response
+              window.__bootstrapData = null;
+              const origFetch = window.fetch;
+              window.fetch = function (input, init) {
+                const url = typeof input === "string" ? input : input && input.url ? input.url : "";
+                if (url.includes("client-crypto/v1/bootstrap")) {
+                  window.__bootstrapUrl = url;
+                  const p = origFetch.apply(this, arguments);
+                  p.then((res) => {
+                    res.clone().json().then((j) => {
+                      window.__bootstrapData = j;
+                    }).catch(() => {});
+                  });
+                  return p;
+                }
+                return origFetch.apply(this, arguments);
+              };
+            });
 
-              for (const r of batchResults) {
-                for (const u of r.newUrls) {
-                  if (!visited.has(u) && !queue.includes(u)) queue.push(u);
+            // Navigate to mkissa.to home page (passes Cloudflare challenge)
+            await page.goto("https://mkissa.to/", { waitUntil: "networkidle2", timeout: 30000 });
+            await new Promise((r) => setTimeout(r, 3000));
+
+            // SPA-navigate to an episode page to trigger bootstrap + crypto init
+            // Use search to find One Piece, then click through to an episode
+            await page.evaluate(() => {
+              const searchBtn = document.querySelector('button[aria-label="Open search"]');
+              if (searchBtn) searchBtn.click();
+            });
+            await new Promise((r) => setTimeout(r, 1000));
+
+            await page.type('input[type="search"], input[role="searchbox"]', "one piece");
+            await page.keyboard.press("Enter");
+            await new Promise((r) => setTimeout(r, 3000));
+
+            // Click on the first anime result
+            await page.evaluate(() => {
+              const links = document.querySelectorAll('a[href*="/anime/"]');
+              for (const link of links) {
+                if (link.textContent.includes("1P") || link.textContent.includes("One Piece")) {
+                  link.click();
+                  return;
                 }
               }
+              if (links[0]) links[0].click();
+            });
+            await new Promise((r) => setTimeout(r, 3000));
+
+            // Click "Watch Ep 1"
+            await page.evaluate(() => {
+              const watchLinks = document.querySelectorAll('a[href*="/p-1-"]');
+              if (watchLinks[0]) watchLinks[0].click();
+            });
+            await new Promise((r) => setTimeout(r, 8000));
+
+            // Extract captured data
+            const importedKeys = await page.evaluate(() => window.__importedKeys || []);
+            const bootstrapUrl = await page.evaluate(() => window.__bootstrapUrl || null);
+            const bootstrapData = await page.evaluate(() => window.__bootstrapData || null);
+
+            await browser.close();
+
+            if (!bootstrapData || !bootstrapData.partB) {
+              throw new Error("Failed to capture __aaCrypto from bootstrap endpoint. " +
+                "importedKeys: " + JSON.stringify(importedKeys) +
+                ", bootstrapUrl: " + bootstrapUrl +
+                ", bootstrapData: " + JSON.stringify(bootstrapData));
             }
-            throw new Error(`MASK/BUILD_ID not found after crawling ${crawlCount} chunks — pattern shape may have changed. Update extractMaskAndBuildId() in both worker.js and this workflow.`);
+
+            if (importedKeys.length === 0) {
+              throw new Error("Failed to capture AES key from crypto.subtle.importKey");
+            }
+
+            // The derived AES key = XOR(base64_decode(partB), MASK)
+            // Therefore: MASK = derived_AES_key XOR base64_decode(partB)
+            const aesKeyHex = importedKeys[0].hex;
+            const aesKeyBytes = Buffer.from(aesKeyHex, "hex");
+            const partBBytes = Buffer.from(bootstrapData.partB, "base64");
+
+            if (aesKeyBytes.length !== 32 || partBBytes.length < 32) {
+              throw new Error(`Key length mismatch: AES key=${aesKeyBytes.length}, partB=${partBBytes.length}`);
+            }
+
+            const maskBytes = Buffer.alloc(32);
+            for (let i = 0; i < 32; i++) {
+              maskBytes[i] = aesKeyBytes[i] ^ partBBytes[i];
+            }
+            const mask = maskBytes.toString("hex");
+
+            // Extract BUILD_ID from the bootstrap URL
+            let buildId = null;
+            if (bootstrapUrl) {
+              const match = bootstrapUrl.match(/[?&]buildId=(\d+)/);
+              if (match) buildId = match[1];
+            }
+
+            if (!buildId) {
+              throw new Error("Could not extract BUILD_ID from bootstrap URL: " + bootstrapUrl);
+            }
+
+            const result = { mask, buildId };
+            console.log("✓ MASK=" + mask.slice(0, 16) + "... BUILD_ID=" + buildId);
+            console.log("  AES key: " + aesKeyHex.slice(0, 16) + "...");
+            console.log("  partB length: " + bootstrapData.partB.length);
+            console.log("  epoch: " + bootstrapData.epoch);
+            console.log(JSON.stringify(result));
           }
 
-          main().then(result => {
-            // main() logs the JSON via console.log — capture from /tmp/discovery-result.json
-          }).catch(e => {
+          main().catch((e) => {
             console.error("FATAL:", e.message);
             process.exit(1);
           });
