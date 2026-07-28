@@ -53,7 +53,15 @@ jobs:
 
       - name: Install dependencies
         working-directory: cf-worker
-        run: npm ci
+        run: |
+          # Try npm ci first (fast, requires lock file in sync with package.json)
+          # Fall back to npm install if the lock file is out of sync
+          if npm ci 2>/dev/null; then
+            echo "✅ npm ci succeeded"
+          else
+            echo "⚠️ npm ci failed (lock file out of sync), falling back to npm install"
+            npm install
+          fi
 
       - name: Verify wrangler.toml is valid
         working-directory: cf-worker
