@@ -259,37 +259,96 @@ async function fetchAaCryptoViaBrowser(showId, episodeString, translationType, e
   const browser = await launch(env.BROWSER);
   const page = await browser.newPage();
 
-  // Set up response interceptor to capture the bootstrap response
+  // Set a realistic User-Agent — Cloudflare's Turnstile challenge is more
+  // likely to pass with a real browser UA.
+  await page.setUserAgent(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+  );
+
+  // Set up response interceptor to capture the bootstrap response.
+  // Listen on ALL responses (including cross-origin to api.mkissa.net).
   let bootstrapData = null;
   page.on("response", async (response) => {
-    const url = response.url();
-    if (url.includes("client-crypto/v1/bootstrap") && response.ok()) {
-      try {
+    try {
+      const url = response.url();
+      if (url.includes("client-crypto/v1/bootstrap") && response.ok()) {
         const json = await response.json();
         if (json.partB && json.epoch) {
           bootstrapData = json;
           console.log(`[worker] intercepted bootstrap response: epoch=${json.epoch}, partB length=${json.partB.length}`);
         }
-      } catch (e) {
-        // response.json() can fail if the response is not JSON
       }
+    } catch (e) {
+      // response.json() can fail if the response is not JSON or already consumed
+    }
+  });
+
+  // Also intercept requests to log what's happening (for debugging)
+  page.on("requestfailed", (request) => {
+    const url = request.url();
+    if (url.includes("mkissa") || url.includes("bootstrap")) {
+      console.log(`[worker] request failed: ${url} — ${request.failure()?.errorText}`);
     }
   });
 
   try {
-    // Navigate to the episode page — the SPA will automatically make the
-    // bootstrap request, which we intercept above.
-    const url = `https://mkissa.to/anime/${showId}/p-${episodeString}-${translationType}`;
-    console.log(`[worker] navigating to ${url}`);
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+    // ─── Step 1: Navigate to the HOME page first ───
+    // mkissa.to's episode pages are behind Cloudflare Turnstile, which blocks
+    // direct navigation. The home page loads without Turnstile. Once the SPA
+    // is loaded, we can SPA-navigate to the episode page (no fresh challenge).
+    console.log("[worker] navigating to mkissa.to home page");
+    await page.goto("https://mkissa.to/", {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
 
-    // Wait for the bootstrap response (the SPA makes it on page load)
+    // Wait for the SPA to hydrate (SvelteKit needs to load + render)
+    console.log("[worker] waiting for SPA hydration...");
+    await new Promise((r) => setTimeout(r, 5000));
+
+    // Check if we're past Cloudflare's challenge
+    const title = await page.title();
+    console.log(`[worker] page title: "${title}"`);
+    if (title.includes("Just a moment")) {
+      // Cloudflare Turnstile challenge — wait for it to pass
+      console.log("[worker] Cloudflare challenge detected, waiting for it to pass...");
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const newTitle = await page.title();
+        if (!newTitle.includes("Just a moment")) {
+          console.log(`[worker] challenge passed, title: "${newTitle}"`);
+          break;
+        }
+      }
+    }
+
+    // ─── Step 2: SPA-navigate to the episode page ───
+    // This doesn't trigger a fresh Cloudflare challenge because the browser
+    // already has the cf_clearance cookie from the home page load.
+    const episodeUrl = `https://mkissa.to/anime/${showId}/p-${episodeString}-${translationType}`;
+    console.log(`[worker] SPA-navigating to ${episodeUrl}`);
+    await page.goto(episodeUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+
+    // ─── Step 3: Wait for the bootstrap response ───
+    // The SPA makes the bootstrap request automatically on page load.
+    // Wait up to 30 seconds for it to be intercepted.
+    console.log("[worker] waiting for bootstrap response...");
     for (let i = 0; i < 30 && !bootstrapData; i++) {
       await new Promise((r) => setTimeout(r, 1000));
     }
 
     if (!bootstrapData) {
-      throw new Error("bootstrap response not intercepted within 30s");
+      // Log what happened for debugging
+      const finalTitle = await page.title();
+      const finalUrl = await page.url();
+      throw new Error(
+        `bootstrap response not intercepted within 30s. ` +
+        `Final URL: ${finalUrl}, Title: "${finalTitle}". ` +
+        `The page may be stuck on Cloudflare's Turnstile challenge.`
+      );
     }
 
     console.log(`[worker] __aaCrypto from browser: epoch=${bootstrapData.epoch}, partB length=${bootstrapData.partB.length}`);
