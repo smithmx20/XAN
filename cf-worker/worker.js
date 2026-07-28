@@ -203,7 +203,7 @@ async function buildAaReq(queryHash, epoch, aesKey, buildId) {
 // FALLBACK: If the HTML doesn't contain __aaCrypto (mkissa.to moved it to a
 // bootstrap API endpoint in July 2026), use Browser Rendering to load the
 // page and intercept the bootstrap network response.
-async function fetchAaCrypto(showId, episodeString, translationType) {
+async function fetchAaCrypto(showId, episodeString, translationType, env) {
   // ─── Step 1: Try the direct HTML scrape (fast, no browser) ───
   try {
     const url = MKISSA_EPISODE_URL(showId, episodeString, translationType);
@@ -244,19 +244,19 @@ async function fetchAaCrypto(showId, episodeString, translationType) {
   // Free tier: 10 min/day browser CPU. Each bootstrap takes ~5-10s.
   // __aaCrypto is cached for ~3 days (epochMs), so we only need to bootstrap
   // once per epoch — well within the free tier.
-  if (typeof BROWSER !== "undefined") {
-    return await fetchAaCryptoViaBrowser(showId, episodeString, translationType);
+  if (typeof BROWSER !== "undefined" || (env && env.BROWSER)) {
+    return await fetchAaCryptoViaBrowser(showId, episodeString, translationType, env);
   }
 
   throw new Error("__aaCrypto not found in HTML and Browser Rendering not configured. Add the BROWSER binding to wrangler.toml.");
 }
 
 // Fetch __aaCrypto via Cloudflare Browser Rendering (Puppeteer)
-async function fetchAaCryptoViaBrowser(showId, episodeString, translationType) {
-  const puppeteer = require("@cloudflare/puppeteer");
+async function fetchAaCryptoViaBrowser(showId, episodeString, translationType, env) {
+  const { launch } = await import("@cloudflare/puppeteer");
   console.log("[worker] launching browser for __aaCrypto bootstrap");
 
-  const browser = await puppeteer.launch(env.BROWSER);
+  const browser = await launch(env.BROWSER);
   const page = await browser.newPage();
 
   // Set up response interceptor to capture the bootstrap response
@@ -593,11 +593,11 @@ function setCached(key, sources) {
 const AA_CRYPTO_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 let aaCryptoCache = null; // { aaCrypto, aesKey, expiresAt }
 
-async function getAaCryptoAndKey(showId, episodeString, translationType) {
+async function getAaCryptoAndKey(showId, episodeString, translationType, env) {
   if (aaCryptoCache && aaCryptoCache.expiresAt > Date.now()) {
     return aaCryptoCache;
   }
-  const aaCrypto = await fetchAaCrypto(showId, episodeString, translationType);
+  const aaCrypto = await fetchAaCrypto(showId, episodeString, translationType, env);
   const { mask } = await getMaskAndBuildId();
   const aesKey = await deriveAesKey(aaCrypto.partB, mask);
   aaCryptoCache = {
@@ -684,7 +684,7 @@ versionFix
 }
 }`;
 
-async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType) {
+async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType, env) {
   const cacheKey = `${showId}:${episodeString}:${translationType}`;
 
   // Check cache
@@ -698,7 +698,7 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
 
   try {
     // Step 1: Get __aaCrypto from mkissa.to (no Cloudflare challenge!)
-    const { aaCrypto, aesKey } = await getAaCryptoAndKey(showId, episodeString, translationType);
+    const { aaCrypto, aesKey } = await getAaCryptoAndKey(showId, episodeString, translationType, env);
 
     // Step 2: Compute query hash
     const queryHash = await computeQueryHash(EPISODE_QUERY);
@@ -778,7 +778,7 @@ async function fetchAllAnimeEpisodeDirect(showId, episodeString, translationType
           console.log("[worker] discovered values match fallback — error is not crypto-related, skipping retry");
         } else {
         // Re-fetch fresh __aaCrypto + re-derive key + re-sign + retry the API call
-        const freshCrypto = await getAaCryptoAndKey(showId, episodeString, translationType);
+        const freshCrypto = await getAaCryptoAndKey(showId, episodeString, translationType, env);
         const freshAaReq = await buildAaReq(queryHash, freshCrypto.aaCrypto.epoch, freshCrypto.aesKey, fresh.buildId);
 
         const retryRes = await fetch(ALLANIME_API, {
@@ -929,7 +929,7 @@ const worker = {
         return jsonError("translationType must be 'sub' or 'dub'", 400);
       }
 
-      const result = await fetchAllAnimeEpisodeDirect(showId, episodeString, translationType);
+      const result = await fetchAllAnimeEpisodeDirect(showId, episodeString, translationType, env);
 
       return new Response(
         JSON.stringify({
