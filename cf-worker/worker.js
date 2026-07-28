@@ -649,7 +649,11 @@ function setCached(key, sources) {
 // Cache for __aaCrypto + derived AES key.
 // The partB key rotates periodically (AA_CRYPTO_STALE when it expires).
 // Cache for 1 hour — if stale, the retry logic will refresh it automatically.
-const AA_CRYPTO_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+// __aaCrypto cache TTL: 3 hours (the actual __aaCrypto epoch lasts ~3 days,
+// but we refresh more often to be safe). This minimizes Browser Rendering
+// usage — each browser session consumes ~10-30s of the 10 min/day free tier.
+// With a 3-hour cache, we need at most 8 browser sessions/day = ~4 min/day.
+const AA_CRYPTO_CACHE_TTL_MS = 3 * 60 * 60 * 1000; // 3 hours
 let aaCryptoCache = null; // { aaCrypto, aesKey, expiresAt }
 
 async function getAaCryptoAndKey(showId, episodeString, translationType, env) {
