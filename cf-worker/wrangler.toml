@@ -5,6 +5,13 @@ name = "xan-stream-proxy"
 main = "worker.js"
 compatibility_date = "2024-12-01"
 
+# @cloudflare/puppeteer uses Node.js built-in modules (path, fs/promises).
+# The nodejs_compat flag is REQUIRED for it to build and run.
+# Without this flag, wrangler deploy fails with:
+#   ✘ [ERROR] Could not resolve "path"
+#   ✘ [ERROR] Could not resolve "fs/promises"
+compatibility_flags = ["nodejs_compat"]
+
 # v6: Browser Rendering fallback for __aaCrypto bootstrap.
 #
 # mkissa.to moved __aaCrypto from the episode page HTML to a bootstrap API
