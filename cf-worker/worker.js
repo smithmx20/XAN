@@ -42,7 +42,7 @@
 //     redeploy)
 // Last manual verification: 2026-08-10
 const FALLBACK_MASK_HEX = "695af2782a31edc2c99a8b21a781d535fb0eab3b8574647f03931d3c3bed5f16";
-const FALLBACK_BUILD_ID = "97";
+const FALLBACK_BUILD_ID = "98";
 
 // Runtime cache for discovered MASK/BUILD_ID. Lives for the lifetime of the
 // Worker isolate (cross-request within the same isolate). TTL is long because
