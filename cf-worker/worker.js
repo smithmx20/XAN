@@ -40,8 +40,8 @@
 //     changed and the regexes below no longer match — in which case update the
 //     regexes in discoverMaskFromMkissa() and the fallback values here, then
 //     redeploy)
-// Last manual verification: 2026-08-13
-const FALLBACK_MASK_HEX = "695af2782a31edc2c99a8b21a781d535fb0eab3b8574647f03931d3c3bed5f16";
+// Last manual verification: 2026-08-14
+const FALLBACK_MASK_HEX = "cf5487de30b64387b21614d641cfcf6174d7f3e24f2e9c6433c916c867db8a1d";
 const FALLBACK_BUILD_ID = "110";
 
 // Runtime cache for discovered MASK/BUILD_ID. Lives for the lifetime of the
