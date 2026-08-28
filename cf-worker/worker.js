@@ -207,7 +207,10 @@ async function loadSpaChunkFunctions() {
           if (!res.ok) return { found: null, newUrls: [] };
           const src = await res.text();
           // Check if this chunk contains the crypto functions
-          if (src.includes("VaildTranslationTypeEnumType") && src.includes("function tk") && src.includes("__aaCrypto")) {
+          // Search for just "VaildTranslationTypeEnumType" — it's a very unique
+          // string only found in the crypto chunk. (Previously also required
+          // "function tk" and "__aaCrypto" but those may be refactored out.)
+          if (src.includes("VaildTranslationTypeEnumType")) {
             return { found: src, newUrls: [] };
           }
           // Collect new chunk URLs
@@ -892,9 +895,11 @@ async function fetchAllAnimeEpisode(showId, episodeString, translationType, env)
     return directResult;
   }
 
-  // If Path A returned NEED_CAPTCHA, try Path B (Browser Rendering)
-  if (directResult.needBrowser || (directResult.error && directResult.error.includes("NEED_CAPTCHA"))) {
-    console.log("[worker] direct crypto hit NEED_CAPTCHA, falling back to Browser Rendering...");
+  // If Path A failed for ANY reason (NEED_CAPTCHA, chunk not found, crypto
+  // error, etc.), fall back to Path B (Browser Rendering). The browser
+  // handles all crypto + Turnstile automatically.
+  if (directResult.needBrowser || directResult.error) {
+    console.log(`[worker] Path A failed (${directResult.error?.slice(0, 80)}), falling back to Browser Rendering...`);
     try {
       const browserResult = await fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translationType, env);
       if (browserResult.sources && browserResult.sources.length > 0) {
