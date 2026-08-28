@@ -826,27 +826,48 @@ async function fetchAllAnimeEpisodeViaBrowser(showId, episodeString, translation
   });
 
   try {
-    // Navigate to the episode page — the SPA will automatically make the bootstrap
-    // + episode GraphQL calls (with Turnstile solving handled by the SPA)
-    const episodeUrl = `https://mkissa.to/watch/${showId}/p-${episodeString}-${translationType}`;
-    console.log(`[browser] navigating to ${episodeUrl}`);
-    await page.goto(episodeUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // ─── Step 1: Navigate to home page first to pass Cloudflare's challenge ───
+    // Direct navigation to /anime/<id>/p-<ep>-<mode> gets stuck on Cloudflare's
+    // "Just a moment..." challenge (HTTP 403). The home page loads without a
+    // challenge, and once the SPA is hydrated + cf_clearance cookie is set,
+    // we can SPA-navigate to the episode page without triggering a fresh challenge.
+    console.log("[browser] navigating to mkissa.to home page first");
+    await page.goto("https://mkissa.to/", { waitUntil: "domcontentloaded", timeout: 30000 });
 
-    // Wait for Cloudflare challenge to pass (if any)
+    // Wait for Cloudflare challenge to pass on home page
     for (let i = 0; i < 15; i++) {
       const title = await page.title();
       if (!title.includes("Just a moment")) break;
       await new Promise((r) => setTimeout(r, 2000));
     }
+    console.log(`[browser] home page loaded — title: ${await page.title()}`);
 
-    // Wait for the episode response (up to 30s)
+    // Wait for SPA to hydrate (SvelteKit needs time to load + render)
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // ─── Step 2: SPA-navigate to the episode page ───
+    // The SPA route is /anime/[showId]/[episodeSlug] where episodeSlug = p-<ep>-<mode>
+    // (NOT /watch/ — that's a different route that doesn't trigger the episode GraphQL)
+    const episodeUrl = `https://mkissa.to/anime/${showId}/p-${episodeString}-${translationType}`;
+    console.log(`[browser] SPA-navigating to ${episodeUrl}`);
+    await page.goto(episodeUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+    // Wait for any Cloudflare challenge to pass
+    for (let i = 0; i < 15; i++) {
+      const title = await page.title();
+      if (!title.includes("Just a moment")) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    console.log(`[browser] episode page loaded — title: ${await page.title()}`);
+
+    // Wait for the episode response (up to 45s — Turnstile can take time)
     console.log("[browser] waiting for episode GraphQL response...");
-    for (let i = 0; i < 30 && !episodeData; i++) {
+    for (let i = 0; i < 45 && !episodeData; i++) {
       await new Promise((r) => setTimeout(r, 1000));
     }
 
     if (!episodeData) {
-      throw new Error("episode response not intercepted within 30s");
+      throw new Error("episode response not intercepted within 45s");
     }
 
     // If we got cleartext sourceUrls, return them

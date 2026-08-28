@@ -10,7 +10,7 @@ compatibility_date = "2024-12-01"
 # Without this flag, wrangler deploy fails with:
 #   ✘ [ERROR] Could not resolve "path"
 #   ✘ [ERROR] Could not resolve "fs/promises"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "unsafe_eval"]
 
 # v6: Browser Rendering fallback for __aaCrypto bootstrap.
 #
