@@ -281,9 +281,19 @@ async function loadSpaChunkFunctions() {
     construct: () => globalStub,
   });
 
-  // Execute the module code with the stub in scope
-  // We use a Function constructor to create a sandboxed scope
-  const wrapper = new Function("globalStub", "crypto", "TextEncoder", "TextDecoder", "atob", "btoa", "URL", "Buffer", "console", moduleCode);
+  // Execute the module code with the stub in scope.
+  // We use a Function constructor to create a sandboxed scope.
+  // NOTE: Cloudflare Workers blocks `new Function()` by default (no unsafe_eval
+  // flag available). This will throw "Code generation from strings disallowed
+  // for this context" — which is caught by the caller (getAaCryptoAndKey) and
+  // causes Path A to gracefully fail and fall back to Path B (Browser Rendering).
+  // Path B is the reliable path anyway — it runs the SPA in a real browser.
+  let wrapper;
+  try {
+    wrapper = new Function("globalStub", "crypto", "TextEncoder", "TextDecoder", "atob", "btoa", "URL", "Buffer", "console", moduleCode);
+  } catch (e) {
+    throw new Error(`Path A unavailable (${e.message}) — Browser Rendering will handle this request`);
+  }
 
   // Workers don't have Buffer by default, but we can provide a shim
   const BufferShim = {
