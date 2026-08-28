@@ -107,14 +107,14 @@ fi
 
 # ─── Step 5: Start the solver ─────────────────────────────────────────────
 echo
-echo -e "${BLUE}── Starting solver on port 3000 ──${NC}"
-# Kill any existing solver on port 3000
+echo -e "${BLUE}── Starting solver on port 3001 ──${NC}"
+# Kill any existing solver on port 3001
 if command -v lsof &> /dev/null; then
-  lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+  lsof -ti:3001 | xargs kill -9 2>/dev/null || true
 fi
 
 # Start solver in background, capture logs
-npm start > /tmp/xan-solver.log 2>&1 &
+PORT=3001 npm start > /tmp/xan-solver.log 2>&1 &
 SOLVER_PID=$!
 echo -e "${GREEN}✓ Solver started (PID: $SOLVER_PID)${NC}"
 echo "  Logs: /tmp/xan-solver.log (tail -f /tmp/xan-solver.log)"
@@ -122,7 +122,7 @@ echo "  Logs: /tmp/xan-solver.log (tail -f /tmp/xan-solver.log)"
 # Wait for solver to be ready
 echo -n "  Waiting for solver to be ready"
 for i in {1..30}; do
-  if curl -s http://localhost:3000/health > /dev/null 2>&1; then
+  if curl -s http://localhost:3001/health > /dev/null 2>&1; then
     echo
     echo -e "${GREEN}✓ Solver ready${NC}"
     break
@@ -150,7 +150,7 @@ if ! command -v cloudflared &> /dev/null; then
 fi
 
 # Start cloudflared, capture output to find the URL
-$CF_BIN tunnel --url http://localhost:3000 > /tmp/xan-tunnel.log 2>&1 &
+$CF_BIN tunnel --url http://localhost:3001 > /tmp/xan-tunnel.log 2>&1 &
 TUNNEL_PID=$!
 
 echo -n "  Waiting for tunnel URL"

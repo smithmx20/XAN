@@ -384,29 +384,31 @@ export async function getEpisodeSources(
       //                                   NEXT_PUBLIC_CF_WORKER_URL if you have
       //                                   your own worker.)
       const FREE_SOLVER_URL = process.env.NEXT_PUBLIC_FREE_SOLVER_URL ?? "";
-      // XANCLD's worker serves its endpoints under /api/* (e.g. /api/allanime/episode).
-      // XAN's own cf-worker serves them at the root (e.g. /allanime/episode).
-      // Since the code below appends `/allanime/episode` to baseUrl, the default
-      // needs to include the `/api` suffix so the final URL is
-      // https://xancld.xyz/api/allanime/episode.
-      const DEFAULT_SOLVER_URL = "https://xancld.xyz/api";
+      // Default: local free-solver (free-solver/server.js on port 3001).
+      // This runs Puppeteer locally to handle mkissa.to's full crypto + Turnstile flow.
+      // Override with NEXT_PUBLIC_FREE_SOLVER_URL for a remote solver, or
+      // NEXT_PUBLIC_CF_WORKER_URL for a Cloudflare Worker deployment.
+      const DEFAULT_SOLVER_URL = "http://localhost:3001";
       const solverUrl = FREE_SOLVER_URL || CF_WORKER_URL || DEFAULT_SOLVER_URL;
       const solverType = FREE_SOLVER_URL
         ? "free-solver"
         : CF_WORKER_URL
           ? "cf-worker"
-          : "xancld-default";
+          : "local-solver";
 
       // Trigger the solver fallback on ANY error from the legacy persisted-query
       // path. AllAnime has rotated/migrated this endpoint multiple times in 2026
       // (PERSISTED_QUERY_NOT_FOUND when the hash is retired, AA_CRYPTO_MISSING
       // when the hash is still known but the request lacks a signed aaReq,
-      // AA_CRYPTO_STALE when the signed proof uses a stale MASK). In all three
-      // cases the right move is to delegate to an external solver that speaks
-      // the current mkissa.to crypto scheme.
+      // AA_CRYPTO_STALE when the signed proof uses a stale MASK, NEED_CAPTCHA
+      // when the server requires a Cloudflare Turnstile token). In all cases
+      // the right move is to delegate to an external solver that speaks
+      // the current mkissa.to crypto scheme (or runs the SPA in a real browser).
       const shouldFallbackToSolver =
         errCode === "AA_CRYPTO_MISSING" ||
         errCode === "PERSISTED_QUERY_NOT_FOUND" ||
+        errCode === "NEED_CAPTCHA" ||
+        errMsg === "NEED_CAPTCHA" ||
         errCode.startsWith("AA_CRYPTO");
 
       if (shouldFallbackToSolver && solverUrl) {
@@ -463,8 +465,8 @@ export async function getEpisodeSources(
           const status = solverRes?.status ?? "null";
           if (status === 404 && !FREE_SOLVER_URL) {
             console.warn(
-              `[AllAnime] CF Worker returned 404 for /allanime/episode — you have a v2 Worker (stream-proxy only). ` +
-                `Deploy the free solver (free-solver/README.md) and set NEXT_PUBLIC_FREE_SOLVER_URL in Vercel.`,
+              `[AllAnime] Solver returned 404 for /allanime/episode — the solver at ${solverUrl} is not running or doesn't have this endpoint. ` +
+                `Start the local free-solver (cd free-solver && npm start) or deploy the cf-worker (cf-worker/README.md).`,
             );
           } else {
             console.warn(

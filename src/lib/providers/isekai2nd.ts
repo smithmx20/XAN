@@ -57,21 +57,22 @@ export async function fetchIsekai2ndSources(
   episodeStr: string,
   mode: "sub" | "dub" = "sub",
 ): Promise<Isekai2ndSource[]> {
-  // Prefer the FREE solver (no cost), fall back to the paid CF Worker.
+  // Prefer the FREE solver (no cost), fall back to the CF Worker.
+  // Default: local free-solver on port 3001 (free-solver/server.js).
   const freeSolverUrl = process.env.NEXT_PUBLIC_FREE_SOLVER_URL;
   const workerUrl = process.env.NEXT_PUBLIC_CF_WORKER_URL;
-  const solverUrl = freeSolverUrl || workerUrl;
+  const solverUrl = freeSolverUrl || workerUrl || "http://localhost:3001";
 
   if (!solverUrl) {
     console.warn(
       "[isekai2nd] No solver configured. Set either:\n" +
         "  - NEXT_PUBLIC_FREE_SOLVER_URL (free — see free-solver/README.md), OR\n" +
-        "  - NEXT_PUBLIC_CF_WORKER_URL (paid — see cf-worker/README.md)",
+        "  - NEXT_PUBLIC_CF_WORKER_URL (cf-worker — see cf-worker/README.md)",
     );
     return [];
   }
 
-  const backend = freeSolverUrl ? "free-solver" : "cf-worker";
+  const backend = freeSolverUrl ? "free-solver" : workerUrl ? "cf-worker" : "local-solver";
   // ✅ Strip trailing slash from solver URL to avoid double-slash bug
   // (e.g., "https://x.workers.dev//allanime/episode" → "https://x.workers.dev/allanime/episode")
   // Double slashes cause Cloudflare Workers to return the root handler

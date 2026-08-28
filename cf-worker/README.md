@@ -1,321 +1,239 @@
-# XAN Cloudflare Worker v4 — Stream Proxy + AllAnime Episode Resolver
+# XAN Cloudflare Worker v6 — Stream Proxy + AllAnime Episode Resolver
 
 Single Cloudflare Worker that does both:
 1. **Stream proxy** — proxies video segments with Referer/Origin headers (saves Vercel bandwidth)
-2. **AllAnime episode resolver** — solves Turnstile captcha via Cloudflare Browser Rendering (free, no external service)
+2. **AllAnime episode resolver** — resolves episode sources via direct crypto + Browser Rendering fallback
 
-## Why this is the best option
+## What changed in v6 (2026-08-29)
 
-| Feature | This Worker (v4) | Old v3 Worker | Free VPS solver |
-|---------|------------------|---------------|-----------------|
-| Cost | **$0** | $0.80-$3/1000 solves (2captcha) | $0 |
-| Card needed | ❌ No | ❌ No | Depends on host |
-| External service | ❌ None | ✓ 2captcha/CapSolver | ✓ VPS provider |
-| Always-on | ✅ Yes | ✅ Yes | Depends on host |
-| Setup time | ~5 min | ~10 min | 15-20 min |
-| Reliability | ⭐⭐⭐⭐⭐ (Cloudflare infra) | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| Single deploy | ✅ Worker does everything | ✅ | ❌ Need VPS + tunnel |
+mkissa.to (formerly allmanga.to) overhauled its crypto:
+- `__aaCrypto` is no longer in page HTML — it's behind a bootstrap API endpoint
+- Episode queries require a signed `aaReq` extension (AES-GCM encrypted)
+- The `aaReq` payload must include `k: contentLane` (was missing in v5 — BUG FIX #1)
+- The `aaReq` IV must include `:lane` suffix (was missing in v5 — BUG FIX #2)
+- Episode queries require a Cloudflare Turnstile token (`NEED_CAPTCHA`)
 
-**This is the recommended path** if you already have a Cloudflare account.
+**v6 fixes all of this:**
+- **Path A (fast, no browser):** Computes `x-aa-boot` + `aaReq` locally by loading mkissa.to's SPA chunk in the Worker. Calls the bootstrap + episode GraphQL directly. Works if the Worker's IP isn't challenged by Turnstile.
+- **Path B (reliable, uses browser):** Falls back to Browser Rendering — loads mkissa.to in managed Chrome, lets the SPA handle all crypto + Turnstile, intercepts the episode response.
 
-## How the episode resolver works
+## How it works
 
 ```
-XAN (Vercel) calls Worker /allanime/episode?showId=...&ep=...
-                ↓
-            Worker launches managed Chrome browser
-            (Cloudflare Browser Rendering — env.BROWSER binding)
-                ↓
-            Browser navigates to allmanga.to/bangumi/<showId>/p-<ep>-<type>
-                ↓
-            Cloudflare "Just a moment..." challenge auto-passes
-            (Chrome on CF infra is more trusted than random VPS IPs)
-                ↓
-            AllAnime's Vue app auto-renders Turnstile widget
-                ↓
-            Turnstile auto-solves (managed mode = no user interaction)
-                ↓
-            Vue app fetches episode sources with captcha token
-                ↓
-            Worker intercepts the GraphQL response
-                ↓
-            Worker decrypts tobeparsed (AES-GCM, key=SHA-256("Xot36i3lK3:v1"))
-                ↓
-            Worker returns sourceUrls to XAN as JSON
-                ↓
-            Worker caches sources for 5 min (subsequent calls are instant)
+XAN calls Worker /allanime/episode?showId=...&episodeString=1&translationType=sub
+    │
+    ├─ Path A: Direct crypto (fast, ~2s)
+    │   1. Load mkissa.to's SPA chunk in the Worker (cached after first load)
+    │   2. Compute x-aa-boot using the SPA's own tk() function
+    │   3. Call bootstrap endpoint → get {epoch, partB}
+    │   4. Derive AES key = XOR(atob(partB), hexToBytes(MASK))
+    │   5. Compute aaReq using the SPA's xk() function (with FIXED bugs)
+    │   6. POST episode GraphQL → get tobeparsed
+    │   7. Decrypt tobeparsed → sourceUrls
+    │   └─ If NEED_CAPTCHA → fall back to Path B
+    │
+    └─ Path B: Browser Rendering (~10-15s, used as fallback)
+        1. Launch managed Chrome (Cloudflare Browser Rendering)
+        2. Navigate to mkissa.to/watch/<showId>/p-<ep>-<type>
+        3. SPA auto-handles: bootstrap + crypto + Turnstile + episode query
+        4. Intercept bootstrap response → derive AES key
+        5. Intercept episode response → decrypt tobeparsed
+        6. Return sourceUrls
 ```
 
-## Free tier limits
+## Why use this Worker
 
-| Resource | Free tier limit | Notes |
-|----------|-----------------|-------|
-| Worker requests/day | 100,000 | Stream proxy + episode resolver combined |
-| Browser CPU time/day | 10 minutes | ~20-60 uncached episode solves |
-| Concurrent browser sessions | 10 | Should never hit this for personal use |
-| Browser session length | 60 seconds max | Plenty for Turnstile (typical: 20-40s) |
-| Worker script size | 1 MB | Ours is ~15 KB |
+| Feature | This Worker (v6) | Local free-solver | No solver |
+|---------|------------------|-------------------|-----------|
+| Cost | **$0** | $0 | $0 |
+| Card needed | ❌ No | Depends on host | ❌ No |
+| Always-on | ✅ Yes | ⚠️ Only when computer is on | N/A |
+| Setup time | ~5 min | ~10 min | 0 min |
+| Reliability | ⭐⭐⭐⭐⭐ (Cloudflare infra) | ⭐⭐⭐ | ❌ No AllAnime sources |
+| Speed | ⭐⭐⭐⭐⭐ (Path A: ~2s, Path B: ~10s) | ⭐⭐⭐ (~15-30s) | N/A |
 
-With 5-min caching, 10 min of browser CPU covers **~100-300 episode plays/day** — way more than enough for personal use. If you outgrow this, Workers Paid is $5/mo for 50M requests/day and unlimited browser time.
+**This is the recommended path** if you have a Cloudflare account (free, no card needed).
 
-## Deploy (5 minutes)
+## Prerequisites
 
-### Step 1: Install wrangler (if not already installed)
+- A Cloudflare account (free signup, no card needed)
+- Node.js 18+ (for running wrangler)
+- The `wrangler` CLI: `npm install -g wrangler`
 
-```bash
-npm install -g wrangler
-# or: bun add -g wrangler
-```
+## Deploy steps (5 min)
 
-### Step 2: Log in to Cloudflare (if not already logged in)
-
-```bash
-wrangler login
-# Opens browser → click "Allow"
-```
-
-If you already have a Cloudflare account from deploying the previous Worker, you're already logged in.
-
-### Step 3: Install the new dependency
-
-The Worker now uses `@cloudflare/puppeteer` for Browser Rendering. Install it:
+### 1. Login to Cloudflare
 
 ```bash
 cd cf-worker
-npm install
+npm install          # installs @cloudflare/puppeteer for Browser Rendering
+wrangler login       # opens browser — click "Allow" (no card needed)
 ```
 
-This installs `@cloudflare/puppeteer` from `package.json`.
-
-### Step 4: Deploy
+### 2. Deploy
 
 ```bash
 wrangler deploy
 ```
 
-Output:
+### 3. Copy the Worker URL
+
+The deploy output will show:
 ```
-Published xan-stream-proxy
+Published xan-stream-proxy (x.xx sec)
   https://xan-stream-proxy.<your-subdomain>.workers.dev
 ```
 
-**Note:** If you already had a Worker deployed at this URL (v2 or v3), this deploy will overwrite it with v4. That's expected — the URL stays the same, the Worker gets upgraded.
+Copy that URL.
 
-### Step 5: Verify
+### 4. Set the URL in XAN
+
+Add to `/home/z/my-project/XAN/.env`:
+```
+NEXT_PUBLIC_CF_WORKER_URL=https://xan-stream-proxy.<your-subdomain>.workers.dev
+```
+
+### 5. Restart XAN
 
 ```bash
-# Health check — should show version: 4 and browserRendering: true
-curl https://xan-stream-proxy.<your-subdomain>.workers.dev/
+/home/z/my-project/scripts/xan-server.sh restart
+```
 
-# Test episode resolver (takes 20-40s on first call, instant cached)
+### 6. Test it
+
+```bash
+# Direct test of the Worker
 curl "https://xan-stream-proxy.<your-subdomain>.workers.dev/allanime/episode?showId=srGrP23qJnjsHrRYD&episodeString=1&translationType=sub"
+
+# Through XAN
+curl "http://localhost:3000/api/stream/5114/1?mode=sub"
+# → should now include AllAnime sources alongside Zen/Koto
 ```
 
-The episode resolver should return:
-```json
-{
-  "sources": [
-    {
-      "sourceUrl": "--abcd1234...",
-      "sourceName": "Yt-mp4",
-      "priority": 1,
-      "type": "mp4"
-    },
-    ...
-  ],
-  "durationMs": 28534,
-  "graphQLCalls": 2
+## How the direct crypto path works (Path A)
+
+The breakthrough in v6: we load mkissa.to's SPA chunk directly in the Worker and call its own crypto functions.
+
+```
+1. Fetch mkissa.to home page → find entry chunk URLs
+2. BFS-crawl chunks → find the one containing "VaildTranslationTypeEnumType" + "function tk"
+3. Strip ES module imports/exports from the chunk
+4. Execute the chunk in a sandboxed Function scope with browser stubs
+5. Extract: tk, xk, Fy, Py, uk, ol, j7, mk, Ak, kk functions
+6. Use tk() to compute x-aa-boot for the bootstrap endpoint
+7. Use xk() to compute aaReq for the episode query
+8. Use ol() to compute the query hash (SHA-256 of the query string)
+9. Use Ak() to decrypt tobeparsed (if the new key fails, fall back to old key)
+```
+
+This approach is fragile (breaks if mkissa.to significantly restructures its
+chunk), but the Worker self-heals:
+- MASK/BUILD_ID are auto-discovered at runtime (crawls the bundle)
+- The SPA chunk is re-fetched each time the Worker cold-starts
+- If Path A fails for any reason, Path B (Browser Rendering) kicks in
+
+## Browser Rendering fallback (Path B)
+
+If Path A returns `NEED_CAPTCHA` (which happens when the Worker's IP is flagged),
+the Worker falls back to Browser Rendering:
+
+```javascript
+// From worker.js:
+if (directResult.needBrowser || directResult.error.includes("NEED_CAPTCHA")) {
+  const browserResult = await fetchAllAnimeEpisodeViaBrowser(showId, ep, mode, env);
+  // ...
 }
 ```
 
-### Step 6: Set Vercel env var (if not already set)
+Browser Rendering:
+- Uses `@cloudflare/puppeteer` to launch managed Chrome
+- Navigates to `mkissa.to/watch/<showId>/p-<ep>-<type>`
+- The SPA handles ALL crypto + Turnstile automatically
+- The Worker intercepts the bootstrap + episode responses
+- Decrypts tobeparsed using the intercepted bootstrap's partB
 
-If you already have `NEXT_PUBLIC_CF_WORKER_URL` set in Vercel → you're done. The URL didn't change, just the Worker behind it.
+**Free tier limits:** 10 min/day browser CPU. Each episode resolve takes ~10-15s.
+With the 5-min response cache, you can resolve ~40 unique episodes/day before
+hitting the limit. The cache helps a lot for repeat views.
 
-If not:
-1. Vercel → your XAN project → Settings → Environment Variables
-2. Add: `NEXT_PUBLIC_CF_WORKER_URL` = `https://xan-stream-proxy.<your-subdomain>.workers.dev`
-3. Environments: ✓ Production, ✓ Preview, ✓ Development
-4. Redeploy Vercel
+## Self-healing
 
-## Endpoints
+The Worker automatically handles mkissa.to changes:
 
-### `GET /` (stream proxy)
+| Change | How it's handled |
+|--------|-----------------|
+| MASK rotation | Auto-discovered from the SPA bundle at runtime |
+| BUILD_ID bump | Auto-discovered from the SPA bundle at runtime |
+| SPA chunk URL change | BFS-crawl finds the chunk by content, not URL |
+| Query string change | The SPA's own `j7()` function is used — always current |
+| `__aaCrypto` relocation | Bootstrap endpoint is called directly (not scraped from HTML) |
+| New crypto scheme | Path B (Browser Rendering) runs the actual SPA — always works |
 
-```
-GET /?url=<stream_url>&h_Referer=<...>&h_Origin=<...>
-```
+## Cost
 
-Proxies a video segment/manifest request to an allowed anime CDN, adding the `Referer` / `Origin` headers that browsers can't set themselves.
-
-The `h_` prefix is stripped and the rest becomes a request header on the upstream fetch.
-
-### `GET /allanime/episode` (episode resolver)
-
-```
-GET /allanime/episode?showId=<allanime_id>&episodeString=<ep>&translationType=sub|dub
-```
-
-Returns:
-```json
-{
-  "sources": [
-    {
-      "sourceUrl": "--abcd1234...",
-      "sourceName": "Yt-mp4",
-      "priority": 1,
-      "type": "mp4"
-    },
-    ...
-  ],
-  "durationMs": 28534,
-  "graphQLCalls": 2
-}
-```
-
-The `sourceUrl` may be encoded (XOR with 56 if prefixed with `--`, hex-decoded if prefixed with `ap/`). XAN's existing `extractSource()` in `src/lib/allanime.ts` handles the decoding.
-
-Cached responses include `"cached": true` and return in <100ms.
-
-### `GET /` (health check)
-
-Without `?url=`, returns service info:
-```json
-{
-  "ok": true,
-  "service": "xan-stream-proxy",
-  "version": 4,
-  "browserRendering": true,
-  "endpoints": { ... },
-  "cacheSize": 3,
-  "allowedHosts": 26
-}
-```
-
-If `browserRendering: false`, the `[[browser]]` binding isn't configured — re-check `wrangler.toml`.
-
-## How XAN uses this Worker
-
-XAN calls this Worker for two purposes:
-
-### 1. Stream bandwidth offloading (existing)
-
-When a user plays a video, XAN's player tries tiers in order:
-- **direct** → browser fetches from CDN directly (0 Vercel BW)
-- **manifest-proxy** → Vercel proxies just the .m3u8 manifest (~5KB)
-- **cf-proxy** → **this Worker** proxies segments with Referer (0 Vercel BW) ← uses `?url=...` endpoint
-- **full-proxy** → Vercel proxies everything (~200MB per episode, last resort)
-
-The Worker's stream proxy tier is what saves your Vercel 10GB/mo bandwidth quota.
-
-### 2. AllAnime episode source resolution (new)
-
-When a user plays an episode, XAN's `/api/stream/[id]/[ep]` route:
-1. Calls AllAnime's GraphQL directly → gets `AA_CRYPTO_MISSING`
-2. Falls back to **this Worker's `/allanime/episode` endpoint** → Worker launches Chrome, solves captcha, returns sources
-3. Sources are merged with Zen/Koto/Pahe/Gogoanime sources
-4. Player picks the best source based on `providerPriority`
-
-XAN code paths that call this endpoint:
-- `src/lib/allanime.ts` → `getEpisodeSources()` AA_CRYPTO_MISSING fallback
-- `src/lib/providers/isekai2nd.ts` → `fetchIsekai2ndSources()`
-- Both use `NEXT_PUBLIC_CF_WORKER_URL` env var
-
-## Security
-
-- **Host allowlist** — the stream proxy only proxies requests to known anime provider CDNs. Prevents abuse as an open proxy.
-- **No request body handling** — stream proxy is GET-only.
-- **No cookies/credentials forwarded** — the Worker doesn't see or forward any user credentials.
-- **No external API keys required** — unlike v3, no 2captcha/CapSolver key needed. Browser Rendering is built into Cloudflare's free tier.
-- **CORS `*`** — allows any origin to use the Worker. Fine because the host allowlist prevents abuse. To lock down, replace `"*"` with your Vercel URL.
+**$0/month** — all on Cloudflare's free tier:
+- Workers: 100,000 requests/day free
+- Browser Rendering: 10 min/day free (enough for ~40 unique episodes/day with caching)
+- No card required
 
 ## Troubleshooting
 
-### `browserRendering: false` in health check
+### "Browser Rendering not configured"
 
-The `[[browser]]` binding isn't configured. Make sure `wrangler.toml` contains:
+The `BROWSER` binding is missing from `wrangler.toml`. Make sure it has:
 ```toml
-[[browser]]
+[browser]
 binding = "BROWSER"
 ```
-Then `wrangler deploy` again.
 
-### `/allanime/episode` returns `"Failed to launch browser"`
+### Path A always returns NEED_CAPTCHA
 
-You've hit the 10 concurrent session limit. Wait a few seconds and retry. If it persists, check `wrangler tail` for errors — you may have a browser session leak (the Worker always closes browsers in `finally`, but a crash could leave one open).
+This means Cloudflare Workers' IPs are being challenged by mkissa.to's Turnstile.
+The Worker will automatically fall back to Path B (Browser Rendering). This is
+expected behavior — Path A is an optimization, Path B is the reliable path.
 
-### `/allanime/episode` returns `"Failed to capture sources"`
+### Path B times out
 
-Cloudflare blocked the browser (rare on Cloudflare's own infra, but possible). Try:
-1. Wait 5 minutes and retry — Cloudflare's bot detection resets periodically
-2. Check `wrangler tail` for the page title — if it's still "Just a moment...", the challenge didn't pass
-3. The Worker caches successful responses for 5 min, so once one request succeeds, subsequent requests for the same episode will be instant
+Browser Rendering may be slow or blocked. Try:
+1. Wait a few minutes (rate limiting)
+2. Check the Worker logs in the Cloudflare dashboard
+3. Make sure you haven't exceeded the 10 min/day browser CPU limit
 
-### `/allanime/episode` is slow (>50s)
+### "crypto chunk not found after crawling"
 
-First call is always slow (browser cold-start + captcha solve). Subsequent calls within 5 min hit the cache and return in <100ms. If you need faster cold-starts, consider Workers Paid ($5/mo) which has higher browser time limits and warm browser pools.
+mkissa.to may have changed their chunk structure. Check:
+1. Can you fetch `https://mkissa.to/` manually?
+2. Do the entry chunks load?
+3. Does any chunk contain `VaildTranslationTypeEnumType`?
 
-### `wrangler deploy` fails with "browser binding requires Workers Paid plan"
+If the chunk structure has changed, update the `loadSpaChunkFunctions()` function
+in `worker.js` to match the new structure.
 
-Cloudflare occasionally changes which features are on the free tier. If this happens, you have two fallbacks:
-1. **Use the free-solver** (Path A: local computer, or Path B: Render.com) — see `free-solver/README.md`
-2. **Use the v3 Worker with paid 2captcha/CapSolver** — see git history for the old `worker.js`
+### Both paths fail
 
-### XAN still shows no "Isekai2nd" sources
+Fall back to the local free-solver (`free-solver/README.md`) which runs Puppeteer
+on your own machine with a residential IP (more likely to pass Turnstile).
 
-1. Check `NEXT_PUBLIC_CF_WORKER_URL` is set in Vercel
-2. Check Vercel redeployed after adding the env var
-3. Check the Worker health check returns `version: 4` and `browserRendering: true`
-4. Check Vercel function logs for `[isekai2nd] cf-worker returned HTTP 502` — if so, the Worker is erroring. Check `wrangler tail` for the actual error.
+## Environment variables
 
-## Monitoring
+Set these in your XAN `.env` (not the Worker):
 
-### Real-time Worker logs
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `NEXT_PUBLIC_CF_WORKER_URL` | `https://xan-stream-proxy.xxx.workers.dev` | The Worker URL from `wrangler deploy` |
 
-```bash
-wrangler tail
-```
+The Worker itself doesn't need any environment variables — everything is auto-discovered.
 
-Keep this running while testing — you'll see:
-- `[worker] launching browser for <showId>:<ep>:<mode>`
-- `[worker] GraphQL call #1: 200 https://api.allanime.day/api?...`
-- `[worker] Cloudflare challenge passed — page title: ...`
-- `[worker] success — 5 sources captured in 28534ms`
+## Updating
 
-### Cloudflare dashboard
-
-- Workers → xan-stream-proxy → Metrics: shows requests, CPU time, errors
-- Workers → xan-stream-proxy → Browser sessions: shows browser session count and CPU time used
-
-## Local development
-
-You can run the Worker locally for testing the stream proxy, but **Browser Rendering doesn't work in `wrangler dev`** (it requires Cloudflare's production infrastructure). To test the episode resolver locally, deploy to production first.
+To update the Worker after pulling new code:
 
 ```bash
 cd cf-worker
-npm install
-wrangler dev
-# → Local server at http://localhost:8787
-# → Stream proxy works, /allanime/episode returns "Browser binding not configured"
+git pull
+wrangler deploy
 ```
 
-## Files
-
-- `worker.js` — the Worker code (single file, ~450 lines)
-- `wrangler.toml` — Cloudflare Workers config with `[[browser]]` binding
-- `package.json` — npm dependencies (`@cloudflare/puppeteer`, `wrangler`)
-- `README.md` — this file
-
-## Cost summary
-
-| Item | Cost |
-|------|------|
-| Cloudflare Workers free tier | $0/month forever |
-| Browser Rendering free tier (10 min CPU/day) | $0/month |
-| Cloudflare account | $0 (no card needed) |
-| XAN on Vercel Hobby | $0 (existing) |
-| **Total** | **$0/month** |
-
-If you outgrow the free tier (unlikely for personal use):
-- Workers Paid: $5/month → 50M requests/day, unlimited browser time
-- Or fall back to the free-solver (Path A or B from `free-solver/README.md`)
+The MASK/BUILD_ID auto-refresh GitHub Action (`.github/workflows/refresh-mkissa-mask.yml`)
+commits new values daily, but you don't need to redeploy for those — the Worker
+auto-discovers them at runtime.

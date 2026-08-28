@@ -64,3 +64,4 @@ npm-debug.log*
 server.log
 yarn-debug.log*
 yarn-error.log*
+free-solver/node_modules/
